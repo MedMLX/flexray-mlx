@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flexray-mlx"
+version = "0.2.6"
+description = "Segment anatomical structures in radiographs with FleXray and native MLX"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Scientific/Engineering :: Image Processing",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+keywords = [
+  "mlx",
+  "apple-silicon",
+  "metal",
+  "medical-imaging",
+  "radiograph",
+  "x-ray",
+  "segmentation",
+  "flexray",
+]
+license = "Apache-2.0 AND MIT AND BSD-3-Clause"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [
+  { name = "Joseph Sandoval" },
+  { name = "Alfredo Sandoval Jr." },
+]
+dependencies = [
+  "medmlx-core==0.2.6",
+  "mlx==0.32.4; platform_system == 'Darwin' and platform_machine == 'arm64'",
+  "numpy>=2.0,<3",
+  "pillow>=13,<14",
+  "pydicom>=3,<4",
+  "PyYAML>=6,<7",
+  "safetensors>=0.6,<1",
+]
+
+[project.urls]
+Homepage = "https://medmlx.org"
+Documentation = "https://github.com/MedMLX/flexray-mlx/blob/v0.2.6/README.md"
+Repository = "https://github.com/MedMLX/flexray-mlx"
+Issues = "https://github.com/MedMLX/flexray-mlx/issues"
+Weights = "https://huggingface.co/MedMLX/flexray-mlx"
+MedMLX = "https://github.com/MedMLX/medmlx"
+
+[project.entry-points."medmlx.models"]
+flexray = "flexray_mlx.medmlx:MODEL"
+
+[project.optional-dependencies]
+dev = [
+  "pyright==1.1.414",
+  "pytest>=8.4,<10",
+  "ruff>=0.13,<1",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flexray_mlx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+markers = ["mlx: requires native MLX execution (Metal on Apple Silicon)"]
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+required-environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+extend-select = ["TID251", "TID252", "ANN401"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+include = ["scripts","src","tests"]
+extraPaths = ["src", "tests", "scripts"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+enableTypeIgnoreComments = false
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Any" = { msg = "Use a precise type at the boundary." }
+"typing_extensions.Any" = { msg = "Use a precise type at the boundary." }
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src/flexray_mlx",
+  "pyproject.toml",
+  "README.md",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+]
