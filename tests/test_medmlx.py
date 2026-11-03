@@ -6,6 +6,7 @@ Reference scripts import only upstream fxr and Torch; tests read recorded arrays
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
@@ -155,6 +156,26 @@ def test_runner_exports_recorded_upstream_unet_prediction(
     assert prediction["tta_samples"] == 1 and prediction["tta_seed"] is None
 
 
+def test_runner_does_not_follow_preexisting_staging_symlink(
+    tmp_path: Path, bundle: Path, stub_network: FloatArray
+) -> None:
+    """Output staging must not overwrite a symlink target outside the output directory."""
+    victim = tmp_path / "victim.json"
+    victim.write_text("original", encoding="utf-8")
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / f".{os.getpid()}.{medmlx.PREDICTION_NAME}").symlink_to(victim)
+
+    result = medmlx.run(
+        image_path=write_case(tmp_path / "inputs", "l8"),
+        weights_path=bundle,
+        output_dir=output,
+    )
+
+    assert victim.read_text(encoding="utf-8") == "original"
+    assert Path(result["outputs"]["prediction"]).is_file()
+
+
 @pytest.mark.parametrize(("case", "label", "threshold"), RESTORE_CASES)
 def test_run_postprocessing_matches_upstream_decisions(
     tmp_path: Path,
@@ -246,7 +267,14 @@ def test_member_probabilities_match_torch_sigmoid_and_mean(
 
 
 @pytest.mark.parametrize(
-    "problem", ["missing_image", "threshold_out_of_range", "non_bool_overwrite", "existing_output"]
+    "problem",
+    [
+        "missing_image",
+        "threshold_out_of_range",
+        "non_bool_overwrite",
+        "existing_output",
+        "dangling_output",
+    ],
 )
 def test_run_rejects_bad_arguments_before_downloading_weights(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str
@@ -264,13 +292,19 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
         "threshold_out_of_range": {"threshold": 1.5},
         "non_bool_overwrite": {"overwrite": "yes"},
         "existing_output": {},
+        "dangling_output": {},
     }
     if problem == "existing_output":
         output.mkdir()
         (output / medmlx.MASK_NAME).write_bytes(b"previous")
+    elif problem == "dangling_output":
+        output.mkdir()
+        (output / medmlx.MASK_NAME).symlink_to(tmp_path / "absent.png")
     arguments = {"image_path": write_case(tmp_path, "l8"), "output_dir": output, **changes[problem]}
     with pytest.raises(InvalidInputError):
         run_untyped(**arguments)
+    if problem == "dangling_output":
+        assert (output / medmlx.MASK_NAME).is_symlink()
 
 
 @pytest.mark.parametrize("damage", ["weights_file", pytest.param("tensors", marks=pytest.mark.mlx)])
