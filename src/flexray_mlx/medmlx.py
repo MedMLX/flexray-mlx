@@ -17,6 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from itertools import combinations
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import numpy as np
@@ -1148,7 +1149,7 @@ def run(
         for first, second in combinations(destinations, 2)
     ):
         raise InvalidInputError("FleXray outputs must not refer to the same file")
-    existing = [path.as_posix() for path in destinations if path.exists()]
+    existing = [path.as_posix() for path in destinations if path.exists() or path.is_symlink()]
     if existing and not overwrite:
         raise InvalidInputError(
             f"FleXray outputs already exist: {', '.join(existing)}; "
@@ -1246,19 +1247,15 @@ def run(
         "probability_mode": "multilabel",
         "overlay_is_source_grid": True,
     }
-    # Write beside the targets and rename once all four exist, so a failed run keeps
-    # earlier outputs. The temporary names keep the suffixes the writers read.
-    partial = {name: output / f".{os.getpid()}.{name}" for name in names}
-    try:
+    # Private staging keeps predictable top-level symlinks away from the writers.
+    with TemporaryDirectory(prefix=".flexray-mlx-", dir=output) as staging:
+        partial = {name: Path(staging) / name for name in names}
         source.save(partial[DISPLAY_NAME])
         mask.save(partial[MASK_NAME])
         np.save(partial[PROBABILITIES_NAME], probabilities, allow_pickle=False)
         partial[PREDICTION_NAME].write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         for name, temporary in partial.items():
             os.replace(temporary, output / name)
-    finally:
-        for temporary in partial.values():
-            temporary.unlink(missing_ok=True)
     return {
         "outputs": {
             "mask": mask_path.as_posix(),
