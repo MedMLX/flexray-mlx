@@ -923,13 +923,15 @@ def _load_models(bundles: Sequence[Path]) -> tuple[Forward, ...]:
     for bundle in bundles:
         try:
             model = FleXrayMlxModel(bundle)
+        # Unreadable or malformed bundle files only; a config that is not a mapping
+        # surfaces as KeyError, TypeError or AttributeError. MLX/Metal RuntimeErrors
+        # propagate unchanged instead of being reported as incompatible weights.
         except (
             OSError,
             KeyError,
             TypeError,
             AttributeError,
             ValueError,
-            RuntimeError,
             SafetensorError,
             YAMLError,
         ) as error:
