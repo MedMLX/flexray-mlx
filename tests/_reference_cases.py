@@ -1,4 +1,4 @@
-"""Deterministic bundle inputs shared by fixture generation and equivalence tests."""
+"""Deterministic bundle inputs shared by the equivalence and runner tests."""
 
 from collections.abc import Mapping
 from pathlib import Path
@@ -79,22 +79,16 @@ def full_state_dict(seed: int) -> dict[str, FloatArray]:
     return weights
 
 
-def seeded_images(seed: int) -> FloatArray:
-    """Create the seeded full-size input for the upstream network fixture."""
-    return np.random.default_rng(seed).standard_normal((1, 1, 256, 256), dtype=np.float32)
-
-
 def write_bundle(
     bundle: Path,
     state_dict: Mapping[str, HostArray] | None = None,
     *,
     weight_seed: int = 1729,
-    config: dict[str, object] | None = None,
 ) -> None:
     """Write a test configuration and safetensors bundle."""
     bundle.mkdir(parents=True, exist_ok=True)
     (bundle / "config.yml").write_text(
-        yaml.safe_dump({"model": MODEL_CONFIG if config is None else config}), encoding="utf-8"
+        yaml.safe_dump({"model": MODEL_CONFIG}), encoding="utf-8"
     )
     save_file(
         full_state_dict(weight_seed) if state_dict is None else state_dict,

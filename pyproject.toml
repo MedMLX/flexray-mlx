@@ -88,8 +88,8 @@ extend-select = ["TID251", "TID252", "ANN401"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["scripts","src","tests"]
-extraPaths = ["src", "tests", "scripts"]
+include = ["src", "tests"]
+extraPaths = ["src", "tests"]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
 enableTypeIgnoreComments = false

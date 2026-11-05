@@ -874,28 +874,6 @@ def multilabel_probabilities(logits: FloatArray) -> FloatArray:
     return probabilities
 
 
-def ensemble_probabilities(member_logits: Sequence[FloatArray]) -> FloatArray:
-    """Upstream ``_predict_with_tta`` with one pass: member probabilities, then their mean.
-
-    ``member_logits`` holds one float32 array per member, all the same shape
-    (here ``(1, 61, 256, 256)``). Returns the float32 mean of the per-member
-    sigmoid probabilities, in the same shape.
-
-    Raises:
-        ValueError: ``member_logits`` is empty.
-    """
-
-    if not member_logits:
-        raise ValueError("FleXray requires at least one ensemble member")
-    probabilities = multilabel_probabilities(member_logits[0])
-    if len(member_logits) == 1:
-        return probabilities
-    probability_sum = probabilities
-    for logits in member_logits[1:]:
-        probability_sum = probability_sum + multilabel_probabilities(logits)
-    return (probability_sum / np.float32(len(member_logits))).astype(np.float32)
-
-
 # --- Source-grid mask export --------------------------------------------------------
 
 

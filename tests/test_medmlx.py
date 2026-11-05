@@ -34,7 +34,7 @@ from PIL import Image
 
 from flexray_mlx import medmlx
 from flexray_mlx._types import FloatArray, HostArray, RunResult
-from flexray_mlx.tta import Forward
+from flexray_mlx.tta import Forward, predict_with_tta
 
 PROBABILITY_BOUND = 9e-3
 # Untyped view of the runner for deserialized invalid argument values.
@@ -257,8 +257,14 @@ def test_member_probabilities_match_torch_sigmoid_and_mean(
     # Repetition crosses processing blocks; reversed views exercise strided inputs.
     repeats = (copies, 1, 1, 1)
     logits = [np.tile(value, repeats)[..., ::step] for value in seeded_member_logits(3)]
-    single = medmlx.ensemble_probabilities(logits[:1])
-    ensemble = medmlx.ensemble_probabilities(logits)
+
+    def replay(value: FloatArray) -> Forward:
+        """Return a member whose forward pass yields recorded logits."""
+        return lambda _images: value
+
+    images = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    _, single = predict_with_tta(replay(logits[0]), images)
+    _, ensemble = predict_with_tta([replay(value) for value in logits], images)
     assert single.dtype == ensemble.dtype == np.float32
     assert np.array_equal(single, np.tile(reference["probabilities/single"], repeats)[..., ::step])
     assert np.array_equal(

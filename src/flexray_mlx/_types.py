@@ -20,7 +20,6 @@ type BoolArray = NDArray[np.bool_]
 type IntArray = NDArray[np.int64]
 type UIntArray = NDArray[np.uint32]
 type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
-type JsonObject = dict[str, JsonValue]
 
 
 class NativeRuntime(MlxRuntime, Protocol):
