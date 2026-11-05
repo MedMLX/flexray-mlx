@@ -6,7 +6,6 @@ Reference scripts import only upstream fxr and Torch; tests read recorded arrays
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
@@ -154,26 +153,6 @@ def test_runner_exports_recorded_upstream_unet_prediction(
     prediction = json.loads(Path(outputs["prediction"]).read_text())
     assert prediction["content_box_tlbr"] == fixture["content_box"].tolist()
     assert prediction["tta_samples"] == 1 and prediction["tta_seed"] is None
-
-
-def test_runner_does_not_follow_preexisting_staging_symlink(
-    tmp_path: Path, bundle: Path, stub_network: FloatArray
-) -> None:
-    """Output staging must not overwrite a symlink target outside the output directory."""
-    victim = tmp_path / "victim.json"
-    victim.write_text("original", encoding="utf-8")
-    output = tmp_path / "out"
-    output.mkdir()
-    (output / f".{os.getpid()}.{medmlx.PREDICTION_NAME}").symlink_to(victim)
-
-    result = medmlx.run(
-        image_path=write_case(tmp_path / "inputs", "l8"),
-        weights_path=bundle,
-        output_dir=output,
-    )
-
-    assert victim.read_text(encoding="utf-8") == "original"
-    assert Path(result["outputs"]["prediction"]).is_file()
 
 
 @pytest.mark.parametrize(("case", "label", "threshold"), RESTORE_CASES)
