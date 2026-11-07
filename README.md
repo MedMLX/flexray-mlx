@@ -6,14 +6,14 @@ Segment anatomical structures in radiographs with FleXray and native MLX.
 
 [![PyPI](https://img.shields.io/pypi/v/flexray-mlx)](https://pypi.org/project/flexray-mlx/)
 [![Python](https://img.shields.io/pypi/pyversions/flexray-mlx)](https://pypi.org/project/flexray-mlx/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/MedMLX/flexray-mlx/blob/v0.2.6/LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/MedMLX/flexray-mlx/blob/v0.2.7/LICENSE)
 [![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-MLX-black?logo=apple)](https://github.com/ml-explore/mlx)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-weights-yellow)](https://huggingface.co/MedMLX/flexray-mlx)
 [![MedMLX](https://img.shields.io/badge/MedMLX-runtime-A51C30)](https://github.com/MedMLX/medmlx)
 
 [Model weights](https://huggingface.co/MedMLX/flexray-mlx) · [MedMLX](https://github.com/MedMLX/medmlx)
 
-<img src="https://raw.githubusercontent.com/MedMLX/flexray-mlx/v0.2.6/docs/showcase.png" alt="Chest radiograph with lung, heart and individual rib segmentations" width="100%">
+<img src="https://raw.githubusercontent.com/MedMLX/flexray-mlx/v0.2.7/docs/showcase.png" alt="Chest radiograph with lung, heart and individual rib segmentations" width="100%">
 
 </div>
 
@@ -43,7 +43,7 @@ For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-wor
 ```bash
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install "flexray-mlx>=0.2.6"
+uv pip install "flexray-mlx>=0.2.7"
 ```
 
 ## Run
@@ -136,6 +136,6 @@ to follow the bundle. Inference needs Apple Silicon with Metal and has no CPU fa
 
 ## License
 
-[Apache-2.0](https://github.com/MedMLX/flexray-mlx/blob/v0.2.6/LICENSE). See [third-party notices](https://github.com/MedMLX/flexray-mlx/blob/v0.2.6/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms. FleXray weights are noncommercial (CC-BY-NC-4.0).
+[Apache-2.0](https://github.com/MedMLX/flexray-mlx/blob/v0.2.7/LICENSE). See [third-party notices](https://github.com/MedMLX/flexray-mlx/blob/v0.2.7/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms. FleXray weights are noncommercial (CC-BY-NC-4.0).
 
 For research and education. Outputs require human review.

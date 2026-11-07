@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flexray-mlx"
-version = "0.2.6"
+version = "0.2.7"
 description = "Segment anatomical structures in radiographs with FleXray and native MLX"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -37,7 +37,7 @@ authors = [
   { name = "Alfredo Sandoval Jr." },
 ]
 dependencies = [
-  "medmlx-core==0.2.6",
+  "medmlx-core>=0.2.6,<0.3",
   "mlx==0.32.4; platform_system == 'Darwin' and platform_machine == 'arm64'",
   "numpy>=2.0,<3",
   "pillow>=13,<14",
@@ -48,7 +48,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://medmlx.org"
-Documentation = "https://github.com/MedMLX/flexray-mlx/blob/v0.2.6/README.md"
+Documentation = "https://github.com/MedMLX/flexray-mlx/blob/v0.2.7/README.md"
 Repository = "https://github.com/MedMLX/flexray-mlx"
 Issues = "https://github.com/MedMLX/flexray-mlx/issues"
 Weights = "https://huggingface.co/MedMLX/flexray-mlx"

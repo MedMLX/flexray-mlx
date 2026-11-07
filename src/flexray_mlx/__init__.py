@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 __all__ = ["FleXrayMlxModel"]
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 
 
 def __getattr__(name: str) -> object:
