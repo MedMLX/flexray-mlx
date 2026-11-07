@@ -41,6 +41,8 @@ MODEL = {
     "label": "FleXray",
     "task": "segmentation",
     "run": "flexray_mlx.medmlx:run",
+    # Measured MLX peak for a 1929x2207 chest radiograph, single model; larger inputs need more.
+    "peak_memory_gb": 1.2,
     "summary": (
         "Anatomy segmentation of one 2D radiograph: 61 independent sigmoid "
         "channels, one selected mask restored to the source pixel grid."
