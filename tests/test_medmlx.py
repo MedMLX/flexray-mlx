@@ -25,6 +25,7 @@ from _runner_cases import (
     seeded_member_logits,
     seeded_percentile_batch,
     seeded_probabilities,
+    source_grid,
     write_case,
     write_release_bundle,
 )
@@ -104,16 +105,11 @@ def test_run_matches_upstream_with_seeded_network(tmp_path: Path) -> None:
     np.testing.assert_allclose(probabilities, expected, rtol=0, atol=PROBABILITY_BOUND)
     mask = _image(outputs["mask"])
     assert mask.shape == (120, 90) and mask.dtype == np.uint8
-    top, left, bottom, right = fixture["content_box"]
-    margin = np.abs(channel - np.float32(threshold))
-    source_margin = np.asarray(
-        Image.fromarray(margin[top:bottom, left:right]).resize(
-            (90, 120), resample=Image.Resampling.NEAREST
-        )
-    )
+    source_margin = cast(FloatArray, source_grid(np.abs(channel - np.float32(threshold)), 120, 90))
     # Rounding may change threshold decisions only inside the allowed probability error.
     stable = source_margin > PROBABILITY_BOUND
-    assert np.array_equal(mask[stable], fixture["mask"][stable])
+    expected_mask = source_grid((channel >= threshold).astype(np.uint8), 120, 90)
+    assert np.array_equal(mask[stable], expected_mask[stable])
     assert np.array_equal(_image(outputs["display_source"]), fixture["display"])
     prediction = json.loads(Path(outputs["prediction"]).read_text(encoding="utf-8"))
     assert prediction["content_box_tlbr"] == fixture["content_box"].tolist() == [0, 32, 256, 224]
@@ -148,7 +144,8 @@ def test_runner_exports_recorded_upstream_unet_prediction(
     outputs = result["outputs"]
     expected = np.broadcast_to(fixture["probabilities_channel"], (61, 256, 256))
     assert np.array_equal(np.load(outputs["probabilities"]), expected)
-    assert np.array_equal(_image(outputs["mask"]), fixture["mask"])
+    decisions = (cast(FloatArray, fixture["probabilities_channel"]) >= threshold).astype(np.uint8)
+    assert np.array_equal(_image(outputs["mask"]), source_grid(decisions, 120, 90))
     assert np.array_equal(_image(outputs["display_source"]), fixture["display"])
     prediction = json.loads(Path(outputs["prediction"]).read_text())
     assert prediction["content_box_tlbr"] == fixture["content_box"].tolist()
@@ -175,7 +172,9 @@ def test_run_postprocessing_matches_upstream_decisions(
         threshold=threshold,
     )
     outputs = result["outputs"]
-    expected_mask = reference[f"restore/{case}/mask"]
+    height, width = reference[f"restore/{case}/mask"].shape
+    decisions = stub_network[LABEL_NAMES.index(label)] >= threshold
+    expected_mask = source_grid(decisions.astype(np.uint8), height, width)
     mask = _image(outputs["mask"])
     assert mask.dtype == np.uint8 and np.array_equal(mask, expected_mask)
     assert np.array_equal(_image(outputs["display_source"]), reference[f"restore/{case}/display"])

@@ -60,6 +60,21 @@ PROBABILITY_SEED = 31337
 LOGIT_SEED = 4242
 
 
+def source_grid(model: HostArray, height: int, width: int) -> HostArray:
+    """Sample a 2D model-grid array at each source pixel centre of a square-padded input.
+
+    Inverts the release preprocessing (centre on a zero-padded square, then resize
+    to the model grid) in exact integer arithmetic: source pixel ``(y, x)`` sits at
+    canvas ``(y + top, x + left)`` and takes model pixel ``floor((c + 0.5) * n / side)``.
+    """
+
+    side = max(height, width)
+    top, left = (side - height) // 2, (side - width) // 2
+    rows = ((2 * (np.arange(height) + top) + 1) * model.shape[0]) // (2 * side)
+    columns = ((2 * (np.arange(width) + left) + 1) * model.shape[1]) // (2 * side)
+    return model[rows[:, None], columns]
+
+
 def _ramp(height: int, width: int, seed: int) -> DoubleArray:
     """A smooth radiograph-like ramp with seeded texture in [0, 1]."""
 

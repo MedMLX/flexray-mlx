@@ -30,7 +30,7 @@ from medmlx_core.errors import (
 from medmlx_core.weights import weights_dir, weights_revision
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from flexray_mlx._types import FloatArray, JsonValue, RealArray, RunResult
+from flexray_mlx._types import FloatArray, IntArray, JsonValue, RealArray, RunResult
 from flexray_mlx.tta import Forward, TtaSettings
 
 if TYPE_CHECKING:
@@ -883,18 +883,24 @@ def restore_mask(
     probabilities: FloatArray,
     *,
     channel: int,
-    content_box: tuple[int, int, int, int],
+    pad_to_square: bool,
     source_size: tuple[int, int],
     threshold: float,
 ) -> Image.Image:
-    """Threshold on the model grid, then crop and restore the binary decisions.
+    """Threshold on the model grid, then map the decisions back to the source pixels.
+
+    This inverts ``ImagePreprocessing.prepare``'s geometry: source pixel ``(y, x)``
+    lies at ``(y + top, x + left)`` on the canvas the source was padded onto, and
+    takes the model pixel whose footprint contains that pixel's centre under the
+    centre-aligned resize, ``floor((c + 0.5) * n / canvas)``. Integer arithmetic
+    keeps centres that fall exactly on a footprint boundary on the later pixel.
+    Stretching the rounded ``content_box`` instead would move edges by up to half
+    a model pixel along the padded axis.
 
     Args:
-        probabilities: ``(61, 256, 256)`` float32 sigmoid probabilities on the
-            model grid.
+        probabilities: ``(61, H, W)`` float32 sigmoid probabilities on the model grid.
         channel: Index of the selected label in ``probabilities``.
-        content_box: ``(top, left, bottom, right)`` model-grid pixels, exclusive
-            bottom/right, from ``ImagePreprocessing.content_box``.
+        pad_to_square: Whether preprocessing centred the source on a square canvas.
         source_size: Source image ``(width, height)`` in pixels (Pillow order).
         threshold: Pixels with probability ``>= threshold`` are foreground.
 
@@ -904,9 +910,19 @@ def restore_mask(
         created by interpolating probabilities.
     """
 
-    top, left, bottom, right = content_box
-    selected = (probabilities[channel, top:bottom, left:right] >= threshold).astype(np.uint8)
-    return Image.fromarray(selected).resize(source_size, resample=Image.Resampling.NEAREST)
+    width, height = source_size
+    side = max(width, height)
+    canvas_width, canvas_height = (side, side) if pad_to_square else (width, height)
+    grid_height, grid_width = probabilities.shape[1:]
+
+    def centres(size: int, canvas: int, grid: int) -> IntArray:
+        offset = (canvas - size) // 2
+        return ((2 * (np.arange(size, dtype=np.int64) + offset) + 1) * grid) // (2 * canvas)
+
+    rows = centres(height, canvas_height, grid_height)
+    columns = centres(width, canvas_width, grid_width)
+    selected = (probabilities[channel] >= threshold).astype(np.uint8)
+    return Image.fromarray(np.ascontiguousarray(selected[rows[:, None], columns]))
 
 
 # --- Runner ---------------------------------------------------------------------------
@@ -1028,8 +1044,8 @@ def run(
     (normally zero-padding the image to a square). All 61 independent sigmoid
     channels (background plus 60 structures) are saved on that model grid. The
     selected structure's binary
-    mask is thresholded on the model grid, cropped, and resized with nearest neighbor,
-    so it keeps the source image's pixel dimensions.
+    mask is thresholded on the model grid, resized with nearest neighbor to the padded
+    canvas and unpadded, so it keeps the source image's pixel dimensions.
 
     Args:
         image_path: One radiograph: a raster image Pillow reads (PNG, TIFF, ...)
@@ -1199,7 +1215,7 @@ def run(
     mask = restore_mask(
         probabilities,
         channel=channel,
-        content_box=box,
+        pad_to_square=preprocessing.pad_to_square,
         source_size=source.size,
         threshold=threshold,
     )

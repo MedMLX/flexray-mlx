@@ -92,9 +92,9 @@ other, the input and the bundle files, including links, even with `overwrite`.
 | `prediction` | `prediction.json` | Labels, selected channel, threshold, members and content box |
 
 FleXray thresholds on the model grid and exports no source-grid images; the PNGs are a
-MedMLX addition. The mask is thresholded first, then cropped to the content box and
-restored to the source size with nearest-neighbour resampling, so no new decisions come
-from interpolation. `run` returns `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
+MedMLX addition. The mask is thresholded first, then resized with nearest neighbour to
+the padded canvas and unpadded, which inverts the preprocessing geometry, so no new
+decisions come from interpolation. `run` returns `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
 Missing or incompatible assets raise
 `AssetNotReadyError`; invalid inputs or existing outputs raise `InvalidInputError`;
 non-finite probabilities raise `ModelExecutionError` before anything is written.

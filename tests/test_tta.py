@@ -9,7 +9,12 @@ from typing import cast
 import numpy as np
 import pytest
 from _reference_cases import FIXTURES, UPSTREAM_REVISION
-from _runner_cases import MEMBERS, RELEASE_PREPROCESSING, write_release_bundle
+from _runner_cases import (
+    MEMBERS,
+    RELEASE_PREPROCESSING,
+    source_grid,
+    write_release_bundle,
+)
 from _tta_cases import TTA_CASES, WEIGHT_SEEDS, SeededForward, seeded_input, standardize_inputs
 from PIL import Image
 
@@ -167,7 +172,10 @@ def test_runner_tta_and_normalization_restore_the_source_grid(
     # and sequential averaging round differently between Torch and NumPy.
     np.testing.assert_allclose(actual, cast(RealArray, expected), rtol=0, atol=1.8e-7)
     with Image.open(result["outputs"]["mask"]) as mask:
-        assert np.array_equal(np.asarray(mask), recorded[f"runner/{scheme}/mask"])
+        # Every channel holds the recorded probabilities, so the lungs channel does too.
+        lungs = cast(RealArray, recorded[f"runner/{scheme}/probabilities"])
+        expected_mask = source_grid((lungs >= 0.5).astype(np.uint8), 37, 53)
+        assert np.array_equal(np.asarray(mask), expected_mask)
         assert mask.size == (53, 37)
     record = json.loads(Path(result["outputs"]["prediction"]).read_text(encoding="utf-8"))
     assert record["content_box_tlbr"] == recorded[f"runner/{scheme}/content_box"].tolist()
