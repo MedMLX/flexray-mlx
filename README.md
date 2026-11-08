@@ -25,7 +25,7 @@ Weights: 2.0 GB download, all five ensemble members. Peak MLX memory: 1.2 GB for
 
 ## Use with MedMLX
 
-The [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) is the lowest-friction way to use this model. It installs this runtime, downloads its weights on first use, and lets an AI agent describe, check and run `flexray` for you.
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `flexray` from an MCP client. Weights download on first use.
 
 ```sh
 uv tool install --python 3.13 "medmlx[segment,mcp]"
@@ -35,8 +35,6 @@ claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
 ```
 
 For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe flexray`.
-
-> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
 ## Install
 
@@ -56,14 +54,12 @@ print(result["outputs"]["mask"])
 ```
 
 Omitting `weights_path` downloads `MedMLX/flexray-mlx` into the shared MedMLX cache on
-first use; interrupted downloads resume and later runs work offline. With MedMLX
-installed, `medmlx setup flexray` downloads it ahead of time. To use your own copy, pass
+first use. With MedMLX
+installed, `medmlx setup flexray` downloads it ahead of time. For local weights, pass
 a folder containing `ensemble.json` and
 `members/flux0375/{config.yml,label_schema.json,model.safetensors,preprocessing.json}`
 as `weights_path`. Automatic setup prepares the flagship (`ensemble=False`);
 `ensemble=True` requires all five members in an explicit folder.
-`details.weights_revision` records the downloaded commit, or `null` for a folder without
-a MedMLX download record.
 
 Use `label_name` to select a structure.
 
@@ -96,9 +92,8 @@ other, the input and the bundle files, including links, even with `overwrite`.
 FleXray thresholds on the model grid and exports no source-grid images; the PNGs are a
 MedMLX addition. The mask is thresholded first, then cropped to the content box and
 restored to the source size with nearest-neighbour resampling, so no new decisions come
-from interpolation. `run` returns `{"outputs": {...}, "details": {...}}`; `details`
-repeats the label and channel, threshold, members, TTA passes, seed, normalization,
-source size, content box and mask pixel count. Missing or incompatible assets raise
+from interpolation. `run` returns `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
+Missing or incompatible assets raise
 `AssetNotReadyError`; invalid inputs or existing outputs raise `InvalidInputError`;
 non-finite probabilities raise `ModelExecutionError` before anything is written.
 
@@ -132,10 +127,8 @@ source-grid restoration are the caller's. `flexray_mlx.tta.predict_with_tta(forw
 images, tta_samples=..., seed=..., normalizer=...)` takes one or more forward callables
 and already normalized float32 BxCxHxW images, and returns `(logits, probabilities)`;
 pass the `normalize` method of `flexray_mlx.medmlx.ImagePreprocessing` as `normalizer`
-to follow the bundle. Inference needs Apple Silicon with Metal and has no CPU fallback.
+to follow the bundle. Inference requires Apple Silicon with Metal.
 
 ## License
 
 [Apache-2.0](https://github.com/MedMLX/flexray-mlx/blob/v0.2.7/LICENSE). See [third-party notices](https://github.com/MedMLX/flexray-mlx/blob/v0.2.7/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms. FleXray weights are noncommercial (CC-BY-NC-4.0).
-
-For research and education. Outputs require human review.
