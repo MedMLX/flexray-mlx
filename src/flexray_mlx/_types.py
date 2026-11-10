@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
 
@@ -25,6 +26,10 @@ type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValu
 class NativeRuntime(MlxRuntime, Protocol):
     def square(self, x: array, /, *, stream: StreamOrDevice = None) -> array:
         """Square an MLX array elementwise."""
+        ...
+
+    def compile(self, fun: Callable[[array], array]) -> Callable[[array], array]:
+        """Compile a pure one-array MLX function."""
         ...
 
 

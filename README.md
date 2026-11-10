@@ -64,6 +64,7 @@ A local folder holds `ensemble.json` and
 | `tta_seed` | `None` by default, unseeded as in FleXray; an integer reproduces Torch CPU augmentation draws |
 | `normalization_scheme` | `None` keeps the bundle's; or `none`, `minmax`, `percentile_minmax` or `standardize` |
 | `overwrite` | `False` by default; existing outputs are replaced only when `True` |
+| `member_residency` | `all` by default; `one` loads ensemble members one at a time, spooling per-view probabilities to a temporary folder, with identical results |
 
 - **DICOM:** files end in `.dcm` or `.dicom` (any case) or have `DICM` at byte 128.
   Accepting a file does not mean the model suits its modality.
@@ -114,13 +115,15 @@ logits = model(np.zeros((1, 1, 256, 256), dtype=np.float32))  # Bx1x256x256 -> B
 
 - The member folder needs the released `config.yml` and `model.safetensors`. Loading
   converts convolution weights to MLX layout and every tensor to float32, keeping the
-  names.
+  names, and rejects tensor names or shapes that differ from the released network.
 - Inputs are prepared images; preparation, sigmoid, ensembling, TTA and source-grid
   restoration are the caller's.
 - `flexray_mlx.tta.predict_with_tta(forward_fn, images, tta_samples=..., seed=..., normalizer=...)`
   takes one or more forward callables and already normalized float32 BxCxHxW images, and
   returns `(logits, probabilities)`. Pass the `normalize` method of
   `flexray_mlx.medmlx.ImagePreprocessing` as `normalizer` to follow the bundle.
+  `flexray_mlx.tta.tta_probabilities` takes the same arguments and returns only the
+  probabilities.
 - Inference requires Apple Silicon with Metal.
 
 ## Use with MedMLX

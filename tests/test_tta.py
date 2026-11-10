@@ -146,9 +146,9 @@ def test_runner_tta_and_normalization_restore_the_source_grid(
     loaded: list[str] = []
 
     def load(bundles: tuple[Path, ...]) -> tuple[SeededForward, ...]:
-        """Record requested members and return seeded fixture forwards."""
+        """Record requested members and return each member's seeded fixture forward."""
         loaded.extend(bundle.name for bundle in bundles)
-        return tuple(SeededForward(seed) for seed in WEIGHT_SEEDS)
+        return tuple(SeededForward(WEIGHT_SEEDS[MEMBERS.index(b.name)]) for b in bundles)
 
     monkeypatch.setattr(medmlx, "_load_models", load)
     preprocessing = medmlx.ImagePreprocessing(
@@ -167,6 +167,21 @@ def test_runner_tta_and_normalization_restore_the_source_grid(
     )
     assert loaded == list(MEMBERS)
     actual = np.load(result["outputs"]["probabilities"], allow_pickle=False)
+    # One resident member at a time must reduce the spooled terms in the same
+    # pass-major float32 order, so the probabilities are bit-identical.
+    one = medmlx.run(
+        image_path=image,
+        weights_path=root,
+        output_dir=tmp_path / "one",
+        ensemble=True,
+        tta_samples=2,
+        tta_seed=0,
+        normalization_scheme=scheme if override else None,
+        member_residency="one",
+    )
+    assert loaded == list(MEMBERS) * 2
+    one_resident = np.load(one["outputs"]["probabilities"], allow_pickle=False)
+    assert np.array_equal(one_resident.view(np.uint32), actual.view(np.uint32))
     expected = np.broadcast_to(recorded[f"runner/{scheme}/probabilities"], actual.shape)
     # Observed max 1.7881393e-7 on both 256x256 five-member cases: convolution
     # and sequential averaging round differently between Torch and NumPy.

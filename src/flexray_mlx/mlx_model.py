@@ -7,6 +7,7 @@ port implements those steps separately and uses MLX for the network forward pass
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -37,6 +38,8 @@ class FleXrayMlxModel:
     Activations are channels-last (NHWC) internally, as MLX convolutions expect.
     Convolution weights are stored upstream in PyTorch OIHW order and are
     transposed to OHWI when loaded. The public input and output stay NCHW.
+    Tensor names and shapes are validated once at load. Each residual block is
+    then a pure function compiled by MLX and evaluated before the next block.
 
     Attributes:
         weights: Every tensor in ``model.safetensors`` as float32, under its
@@ -51,7 +54,8 @@ class FleXrayMlxModel:
                 section) and ``model.safetensors``.
 
         Raises:
-            ValueError: The config describes any other architecture or activation.
+            ValueError: The config describes any other architecture or activation, or
+                the checkpoint's tensor names or shapes differ from that network.
             OSError: ``config.yml`` or ``model.safetensors`` cannot be read.
                 Malformed files raise the YAML or safetensors library's own errors.
         """
@@ -92,47 +96,69 @@ class FleXrayMlxModel:
                 self.weights[key] = mx.array(value)
         # MLX is lazy; evaluate now so loading is complete before the first forward pass.
         mx.eval(*self.weights.values())
-        self._consumed: set[str] = set()
+        # Check every tensor name and shape once, so the forward graph is pure and
+        # never runs a different network. Missing, extra or misshaped tensors all
+        # raise ValueError here, before any inference.
+        shapes = _expected_shapes()
+        if self.weights.keys() != shapes.keys():
+            missing = sorted(shapes.keys() - self.weights.keys())
+            extra = sorted(self.weights.keys() - shapes.keys())
+            raise ValueError(
+                f"FleXray MLX tensor names differ: missing {missing[:3]}, unused {extra[:3]}"
+            )
+        for key, shape in shapes.items():
+            if tuple(self.weights[key].shape) != shape:
+                raise ValueError(f"FleXray MLX tensor {key} has shape {self.weights[key].shape}")
         self._pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        # One compiled pure function per residual block; mx.compile retraces when the
+        # batch shape changes. Weights are captured as constants, which is valid
+        # because they never change after loading.
+        prefixes = [f"down_blocks.{index}" for index in range(len(_FILTERS))]
+        prefixes += [f"up_blocks.{index}" for index in range(len(_FILTERS) - 1)]
+        self._blocks = {prefix: _compiled_block(self.weights, prefix) for prefix in prefixes}
 
-    def _weight(self, key: str) -> array:
-        """Record and return a named checkpoint tensor."""
-        self._consumed.add(key)
-        return self.weights[key]
+    def _run_block(self, x: array, prefix: str) -> array:
+        """Evaluate one compiled block before building the next one.
 
-    def _conv(self, x: array, prefix: str, *, padding: int) -> array:
-        """Apply a learned convolution and bias using the named prefix."""
-        weight = self._weight(f"{prefix}.weight")
-        bias = self._weight(f"{prefix}.bias")
-        return mx.conv2d(x, weight, padding=padding) + bias
+        Evaluating block by block lets MLX release each block's convolution
+        workspaces and intermediates before the next block allocates its own. The
+        arithmetic and operation order are those of the whole-graph evaluation.
+        """
+        y = self._blocks[prefix](x)
+        mx.eval(y)
+        return y
 
-    def _norm(self, x: array, prefix: str) -> array:
-        """Apply per-instance spatial normalization with learned scale and bias."""
-        gamma = self._weight(f"{prefix}.weight")
-        beta = self._weight(f"{prefix}.bias")
-        # Instance norm on NHWC: per sample and channel over H and W. eps=1e-5 is
-        # PyTorch's InstanceNorm2d default; the upstream parity test covers it.
-        mean = mx.mean(x, axis=(1, 2), keepdims=True)
-        variance = mx.mean(mx.square(x - mean), axis=(1, 2), keepdims=True)
-        return (x - mean) * mx.rsqrt(variance + 1e-5) * gamma + beta
+    def forward_native(self, images: array) -> array:
+        """Run the network on a float32 NCHW MLX batch; return NHWC logits.
 
-    def _block(self, x: array, prefix: str) -> array:
-        """Three conv, LeakyReLU, instance-norm steps plus a residual shortcut."""
-        residual = x
-        out = x
-        for index in range(3):
-            # Checkpoint key layout per step: conv at layers.3i, activation at
-            # 3i+1 (no tensors), norm at 3i+2 (norm_after_activation).
-            layer = f"{prefix}.layers.{index * 3}"
-            out = self._conv(out, layer, padding=1)
-            # LeakyReLU with PyTorch's default negative slope of 0.01.
-            out = mx.maximum(out, out * 0.01)
-            out = self._norm(out, f"{prefix}.layers.{index * 3 + 2}")
-        # A 1x1 projection shortcut exists only where channel counts differ.
-        if f"{prefix}.shortcut.conv.weight" in self.weights:
-            residual = self._conv(residual, f"{prefix}.shortcut.conv", padding=0)
-            residual = self._norm(residual, f"{prefix}.shortcut.instancenorm")
-        return out + residual
+        Residual blocks are compiled and evaluated in order; only the final 1x1
+        output convolution is left lazy so callers can fuse their own epilogue.
+
+        Args:
+            images: ``(B, 1, 256, 256)`` float32 MLX array, prepared as for ``__call__``.
+
+        Returns:
+            Unevaluated ``(B, 256, 256, 61)`` float32 logits (channels last).
+
+        Raises:
+            ValueError: ``images`` has another shape or dtype.
+        """
+        if images.ndim != 4 or tuple(images.shape[1:]) != (1, 256, 256):
+            raise ValueError(f"FleXray MLX expects Bx1x256x256, got {images.shape}")
+        if images.dtype != mx.float32:
+            raise ValueError("FleXray MLX expects float32 images")
+        x = mx.transpose(images, (0, 2, 3, 1))
+        skips: list[array] = []
+        for index in range(len(_FILTERS)):
+            x = self._run_block(x, f"down_blocks.{index}")
+            if index < len(_FILTERS) - 1:
+                skips.append(x)
+                x = self._pool(x)
+        for index, skip in enumerate(reversed(skips)):
+            # Preserve corner alignment and resized-before-skip channel order,
+            # while avoiding the separate bilinear samples and resize tensor.
+            x = self._run_block(upsample_concat(x, skip, mx=mx), f"up_blocks.{index}")
+        return _conv(self.weights, x, "output_conv", padding=0)
 
     def __call__(self, images: FloatArray) -> FloatArray:
         """Run the U-Net on prepared images and return raw logits.
@@ -147,27 +173,93 @@ class FleXrayMlxModel:
             Apply a sigmoid for probabilities.
 
         Raises:
-            ValueError: ``images`` has another shape, or the bundle holds tensors
-                this network does not use. A tensor the network needs but the
-                bundle lacks raises ``KeyError``.
+            ValueError: ``images`` has another shape.
         """
         if images.ndim != 4 or images.shape[1:] != (1, 256, 256):
             raise ValueError(f"FleXray MLX expects Bx1x256x256, got {images.shape}")
-        x = mx.array(np.asarray(images, dtype=np.float32).transpose(0, 2, 3, 1))
-        skips: list[array] = []
-        for index in range(len(_FILTERS)):
-            x = self._block(x, f"down_blocks.{index}")
-            if index < len(_FILTERS) - 1:
-                skips.append(x)
-                x = self._pool(x)
-        for index, skip in enumerate(reversed(skips)):
-            # Preserve corner alignment and resized-before-skip channel order,
-            # while avoiding the separate bilinear samples and resize tensor.
-            x = self._block(upsample_concat(x, skip, mx=mx), f"up_blocks.{index}")
-        logits = self._conv(x, "output_conv", padding=0)
+        logits = self.forward_native(mx.array(np.asarray(images, dtype=np.float32)))
         mx.eval(logits)
-        # Fail on extra or misnamed tensors instead of silently running a different net.
-        if self._consumed != self.weights.keys():
-            missing = sorted(self.weights.keys() - self._consumed)
-            raise ValueError(f"FleXray MLX did not consume every released tensor: {missing[:3]}")
         return cast(FloatArray, np.asarray(logits)).transpose(0, 3, 1, 2).copy()
+
+
+def _compiled_block(weights: Mapping[str, array], prefix: str) -> Callable[[array], array]:
+    """Compile the pure residual block ``prefix`` as a one-array function.
+
+    The closure holds only the weight mapping, not the model, so a released
+    model and its compiled graphs are freed by reference counting.
+    """
+
+    def block(x: array) -> array:
+        return _block(weights, x, prefix)
+
+    return mx.compile(block)
+
+
+def _conv(weights: Mapping[str, array], x: array, prefix: str, *, padding: int) -> array:
+    """Apply a learned convolution and bias using the named prefix."""
+    weight = weights[f"{prefix}.weight"]
+    return mx.conv2d(x, weight, padding=padding) + weights[f"{prefix}.bias"]
+
+
+def _norm(weights: Mapping[str, array], x: array, prefix: str) -> array:
+    """Apply per-instance spatial normalization with learned scale and bias.
+
+    Two-pass mean and centred variance, then ``(x - mean) * rsqrt(var + eps) *
+    gamma + beta`` in that operation order. Under compilation MLX fuses the
+    elementwise tail into one kernel; the reductions stay separate.
+    """
+    gamma = weights[f"{prefix}.weight"]
+    beta = weights[f"{prefix}.bias"]
+    # Instance norm on NHWC: per sample and channel over H and W. eps=1e-5 is
+    # PyTorch's InstanceNorm2d default; the upstream parity test covers it.
+    mean = mx.mean(x, axis=(1, 2), keepdims=True)
+    variance = mx.mean(mx.square(x - mean), axis=(1, 2), keepdims=True)
+    return (x - mean) * mx.rsqrt(variance + 1e-5) * gamma + beta
+
+
+def _block(weights: Mapping[str, array], x: array, prefix: str) -> array:
+    """Three conv, LeakyReLU, instance-norm steps plus a residual shortcut."""
+    residual = x
+    out = x
+    for index in range(3):
+        # Checkpoint key layout per step: conv at layers.3i, activation at
+        # 3i+1 (no tensors), norm at 3i+2 (norm_after_activation).
+        out = _conv(weights, out, f"{prefix}.layers.{index * 3}", padding=1)
+        # LeakyReLU with PyTorch's default negative slope of 0.01.
+        out = mx.maximum(out, out * 0.01)
+        out = _norm(weights, out, f"{prefix}.layers.{index * 3 + 2}")
+    # A 1x1 projection shortcut exists only where channel counts differ.
+    if f"{prefix}.shortcut.conv.weight" in weights:
+        residual = _conv(weights, residual, f"{prefix}.shortcut.conv", padding=0)
+        residual = _norm(weights, residual, f"{prefix}.shortcut.instancenorm")
+    return out + residual
+
+
+def _expected_shapes() -> dict[str, tuple[int, ...]]:
+    """Every released tensor name with its loaded shape (convolutions in OHWI)."""
+    shapes: dict[str, tuple[int, ...]] = {}
+
+    def conv(prefix: str, inputs: int, outputs: int, kernel: int) -> None:
+        shapes[f"{prefix}.weight"] = (outputs, kernel, kernel, inputs)
+        shapes[f"{prefix}.bias"] = (outputs,)
+
+    def norm(prefix: str, channels: int) -> None:
+        shapes[f"{prefix}.weight"] = shapes[f"{prefix}.bias"] = (channels,)
+
+    def block(prefix: str, inputs: int, outputs: int) -> None:
+        for index in range(3):
+            conv(f"{prefix}.layers.{index * 3}", inputs if index == 0 else outputs, outputs, 3)
+            norm(f"{prefix}.layers.{index * 3 + 2}", outputs)
+        if inputs != outputs:
+            conv(f"{prefix}.shortcut.conv", inputs, outputs, 1)
+            norm(f"{prefix}.shortcut.instancenorm", outputs)
+
+    channels = 1
+    for index, outputs in enumerate(_FILTERS):
+        block(f"down_blocks.{index}", channels, outputs)
+        channels = outputs
+    for index, outputs in enumerate(reversed(_FILTERS[:-1])):
+        block(f"up_blocks.{index}", channels + outputs, outputs)
+        channels = outputs
+    conv("output_conv", channels, 61, 1)
+    return shapes

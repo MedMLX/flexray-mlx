@@ -97,3 +97,104 @@ def upsample_concat(x: array, skip: array, *, mx: NativeRuntime) -> array:
         output_shapes=[shape],
         output_dtypes=[mx.float32],
     )[0]
+
+
+# Torch's float32 CPU ``sigmoid`` is ``1 / (exp(0 - x) + 1)`` with SLEEF's FMA
+# ``expf``; ``medmlx.sleef_expf`` emulates it in NumPy. This kernel performs the
+# same float32 operations in the same order with explicit FMAs and contraction
+# disabled. Metal flushes subnormal arithmetic results to zero, so a quotient
+# below the smallest normal float is formed by integer round-to-nearest-even
+# division instead; its bits equal the IEEE float32 quotient.
+_SLEEF_SIGMOID = """
+#pragma clang fp contract(off)
+uint i = thread_position_in_grid.x;
+if (i >= N * C * H * W) return;
+uint x = i % W;
+uint y = (i / W) % H;
+uint c = (i / (W * H)) % C;
+uint n = i / (W * H * C);
+uint source_x = flipped[n] != 0 ? W - 1 - x : x;
+float d = 0.0f - logits[((n * H + y) * W + source_x) * C + c];
+int q = int(metal::rint(d * 1.442695040888963407359924681001892137426645954152985934135449406931f));
+float qf = float(q);
+float s = metal::fma(qf, -0.693145751953125f, d);
+s = metal::fma(qf, -1.428606765330187045e-06f, s);
+float u = 0.000198527617612853646278381f;
+u = metal::fma(u, s, 0.00139304355252534151077271f);
+u = metal::fma(u, s, 0.00833336077630519866943359f);
+u = metal::fma(u, s, 0.0416664853692054748535156f);
+u = metal::fma(u, s, 0.166666671633720397949219f);
+u = metal::fma(u, s, 0.5f);
+float squared = s * s;
+u = 1.0f + metal::fma(squared, u, s);
+int half_q = q >> 1;
+u = u * metal::ldexp(1.0f, half_q);
+u = u * metal::ldexp(1.0f, q - half_q);
+if (d < -104.0f) u = 0.0f;
+if (100.0f < d) u = INFINITY;
+float denominator = u + 1.0f;
+uint bits = as_type<uint>(denominator);
+if (bits >= 0x7E800000u && bits < 0x7F800000u) {
+    // 2**126 <= denominator < inf: the quotient is at most 2**-126. With
+    // denominator = m * 2**(e - 23), the result is k * 2**-149 for
+    // k = round(2**(172 - e) / m), and k is also the result's bit pattern.
+    ulong m = ulong((bits & 0x7FFFFFu) | 0x800000u);
+    uint e = (bits >> 23) - 127u;
+    ulong numerator = 1ul << (172u - e);
+    ulong k = numerator / m;
+    ulong twice_remainder = 2ul * (numerator - k * m);
+    if (twice_remainder > m || (twice_remainder == m && (k & 1ul) != 0ul)) k += 1ul;
+    out[i] = as_type<float>(uint(k));
+} else {
+    out[i] = 1.0f / denominator;
+}
+"""
+
+
+@lru_cache(maxsize=1)
+def _sigmoid_kernel(mx: NativeRuntime) -> MetalKernel:
+    """Compile and cache the Torch-CPU-exact sigmoid kernel."""
+    return cast(
+        MetalKernel,
+        mx.fast.metal_kernel(
+            name="flexray_torch_cpu_sigmoid",
+            input_names=["logits", "flipped"],
+            output_names=["out"],
+            source=_SLEEF_SIGMOID,
+            compile_options={"math_mode": "safe"},
+        ),
+    )
+
+
+def torch_cpu_sigmoid(logits: array, flipped: array, *, mx: NativeRuntime) -> array:
+    """Unflip NHWC logits and return Torch-CPU-exact sigmoid probabilities in NCHW.
+
+    Args:
+        logits: Float32 ``(B, H, W, C)`` logits, channels last.
+        flipped: ``(B,)`` int32; nonzero samples are mirrored back along ``W``.
+
+    Returns:
+        Float32 ``(B, C, H, W)`` probabilities whose bits equal
+        ``medmlx.multilabel_probabilities`` of the unflipped NCHW logits for
+        every non-NaN input (NaN logits give NaN).
+
+    Raises:
+        ValueError: Wrong ranks or batch sizes, or more than 2**31 - 1 elements.
+        TypeError: ``logits`` is not float32 or ``flipped`` is not int32.
+    """
+    if logits.ndim != 4 or flipped.ndim != 1 or flipped.shape[0] != logits.shape[0]:
+        raise ValueError("FleXray sigmoid requires NHWC logits and one flip flag per sample")
+    if logits.dtype != mx.float32 or flipped.dtype != mx.int32:
+        raise TypeError("FleXray sigmoid requires float32 logits and int32 flip flags")
+    n, h, w, c = logits.shape
+    count = n * h * w * c
+    if min(n, h, w, c) < 1 or count > 2**31 - 1:
+        raise ValueError("FleXray sigmoid requires positive dimensions within 32-bit indexing")
+    return _sigmoid_kernel(mx)(
+        inputs=[logits, flipped],
+        template=[("N", n), ("H", h), ("W", w), ("C", c)],
+        grid=(count, 1, 1),
+        threadgroup=(256, 1, 1),
+        output_shapes=[(n, c, h, w)],
+        output_dtypes=[mx.float32],
+    )[0]

@@ -2,23 +2,42 @@
 
 Each view is drawn once, normalized again, shared by all members, and unflipped
 on the logits. Accumulation is sequential in view/member order, in float32
-probability space. The plain view is already normalized and stays untouched.
+probability space; ``mean_probabilities`` lets callers that evaluate members
+one at a time reduce stored terms in that same order. The plain view is
+already normalized and stays untouched.
 See root THIRD_PARTY_NOTICES.md for source notices.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 
 from flexray_mlx._random import TorchRandom
 from flexray_mlx._types import BoolArray, FloatArray, IntArray
 
+if TYPE_CHECKING:
+    from mlx.core import array
+
+    from flexray_mlx._types import NativeRuntime
+
 Forward = Callable[[FloatArray], FloatArray]
+
+
+class NativeForward(Protocol):
+    """A member that can also run on MLX arrays (``FleXrayMlxModel``)."""
+
+    def __call__(self, images: FloatArray) -> FloatArray:
+        """Return NCHW logits for NCHW NumPy images."""
+        ...
+
+    def forward_native(self, images: array) -> array:
+        """Return NHWC logits for an NCHW float32 MLX batch."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +82,8 @@ def predict_with_tta(
     shared by all members. Probabilities are the mean of every member's sigmoid
     over every pass. For a single plain pass of one member the logits are that
     member's raw output; otherwise they are the logit of the mean probability
-    clipped to [1e-6, 1 - 1e-6].
+    clipped to [1e-6, 1 - 1e-6]. Use :func:`tta_probabilities` when only the
+    probabilities are needed.
 
     Args:
         forward_fn: One callable, or a sequence of member callables, mapping
@@ -85,30 +105,116 @@ def predict_with_tta(
     # Deferred: flexray_mlx.medmlx imports this module at load time.
     from flexray_mlx.medmlx import multilabel_probabilities
 
-    settings = TtaSettings(tta_samples, seed)
+    settings, forwards = _admit(forward_fn, images, tta_samples, seed)
+    if settings.resolved_samples == 1 and len(forwards) == 1:
+        logits = forwards[0](images)
+        return logits, multilabel_probabilities(logits)
+    probabilities = tta_probabilities(
+        forwards, images, tta_samples=tta_samples, seed=seed, normalizer=normalizer
+    )
+    clamped = np.clip(probabilities, np.float32(1e-6), np.float32(1 - 1e-6))
+    return np.log(clamped) - np.log1p(-clamped), probabilities
+
+
+def tta_probabilities(
+    forward_fn: Forward | Sequence[Forward],
+    images: FloatArray,
+    *,
+    tta_samples: int = 1,
+    seed: int | None = None,
+    normalizer: Forward | None = None,
+) -> FloatArray:
+    """Return only the mean probabilities of :func:`predict_with_tta`, bit for bit.
+
+    Terms are summed in float32 in pass-major order (every member on the plain
+    input, then every member on each augmented view) and divided once by the
+    term count. Members with a ``forward_native`` method (``FleXrayMlxModel``)
+    compute each term's unflip and sigmoid on Metal with a kernel whose float32
+    bits equal the strict CPU emulation; other callables use the CPU emulation.
+    Arguments and errors are those of :func:`predict_with_tta`.
+    """
+
+    settings, forwards = _admit(forward_fn, images, tta_samples, seed)
+    terms = (
+        view_probabilities(forward, view, flipped)
+        for view, flipped in prepared_views(images, settings, normalizer)
+        for forward in forwards
+    )
+    return mean_probabilities(terms, settings.resolved_samples * len(forwards))
+
+
+def _admit(
+    forward_fn: Forward | Sequence[Forward], images: FloatArray, samples: int, seed: int | None
+) -> tuple[TtaSettings, tuple[Forward, ...]]:
+    """Validate TTA settings, member callables and the image batch."""
+    settings = TtaSettings(samples, seed)
     forwards = (forward_fn,) if callable(forward_fn) else tuple(forward_fn)
     if not forwards:
         raise ValueError("predict_with_tta requires at least one forward callable")
     if images.ndim != 4 or images.shape[1] not in {1, 3} or images.dtype != np.float32:
         raise ValueError("FleXray TTA expects float32 BxCxHxW images with 1 or 3 channels")
-    logits = forwards[0](images)
-    probability_sum = multilabel_probabilities(logits)
-    if settings.resolved_samples == 1 and len(forwards) == 1:
-        return logits, probability_sum
-    for forward in forwards[1:]:
-        probability_sum += multilabel_probabilities(forward(images))
+    return settings, forwards
+
+
+def prepared_views(
+    images: FloatArray, settings: TtaSettings, normalizer: Forward | None
+) -> Iterator[tuple[FloatArray, BoolArray | None]]:
+    """Yield ``(view, flipped)`` per pass: the plain input (``None``), then augmented views.
+
+    Views are drawn in fxr's order from one isolated stream. The draws do not
+    depend on network outputs, so callers may materialize the views once and
+    reuse them for members evaluated in any order.
+    """
+
+    yield images, None
     random = TorchRandom(settings.seed)
     for _ in range(settings.resolved_samples - 1):
         augmented, flipped = augment_batch(images, random)
         if normalizer is not None:
             augmented = normalizer(augmented)
-        for forward in forwards:
-            view_logits = forward(augmented)
-            unflipped = np.where(flipped[:, None, None, None], view_logits[..., ::-1], view_logits)
-            probability_sum += multilabel_probabilities(unflipped)
-    probabilities = probability_sum / np.float32(settings.resolved_samples * len(forwards))
-    clamped = np.clip(probabilities, np.float32(1e-6), np.float32(1 - 1e-6))
-    return np.log(clamped) - np.log1p(-clamped), probabilities
+        yield augmented, flipped
+
+
+def view_probabilities(forward: Forward, view: FloatArray, flipped: BoolArray | None) -> FloatArray:
+    """One member's unflipped sigmoid probabilities for one view, as a new float32 array.
+
+    ``flipped`` marks samples mirrored along the width axis (``None`` for the
+    plain pass). Native members run ``forward_native`` and the Torch-CPU-exact
+    Metal sigmoid, copying only probabilities to the host.
+    """
+
+    if hasattr(forward, "forward_native"):
+        from medmlx_core import import_mlx
+
+        from flexray_mlx._kernels import torch_cpu_sigmoid
+
+        mx = cast("NativeRuntime", import_mlx())
+        native = cast(NativeForward, forward)
+        flags = np.zeros(len(view), np.int32) if flipped is None else flipped.astype(np.int32)
+        logits = native.forward_native(mx.array(np.asarray(view, dtype=np.float32)))
+        probabilities = torch_cpu_sigmoid(logits, mx.array(flags), mx=mx)
+        mx.eval(probabilities)
+        return np.array(probabilities, dtype=np.float32)
+    # Deferred: flexray_mlx.medmlx imports this module at load time.
+    from flexray_mlx.medmlx import multilabel_probabilities
+
+    logits = forward(view)
+    if flipped is not None:
+        logits = np.where(flipped[:, None, None, None], logits[..., ::-1], logits)
+    return multilabel_probabilities(logits)
+
+
+def mean_probabilities(terms: Iterable[FloatArray], count: int) -> FloatArray:
+    """Sum float32 terms in the given order, then divide once by ``count``.
+
+    The first term becomes the accumulator and is modified in place.
+    """
+
+    iterator = iter(terms)
+    total = next(iterator)
+    for term in iterator:
+        total += term
+    return total / np.float32(count)
 
 
 def augment_batch(images: FloatArray, random: TorchRandom) -> tuple[FloatArray, BoolArray]:

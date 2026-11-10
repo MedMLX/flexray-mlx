@@ -13,8 +13,9 @@ import json
 import math
 import os
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from functools import partial
 from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -929,7 +930,12 @@ def restore_mask(
 
 
 def _load_models(bundles: Sequence[Path]) -> tuple[Forward, ...]:
-    """Admit MLX once and load each member once, to share every augmented view."""
+    """Admit MLX once and load each member once, to share every augmented view.
+
+    Each member's tensor names and shapes are checked while it loads, so a
+    checkpoint that does not match the released network fails here, before
+    inference.
+    """
     from medmlx_core.runtime import import_mlx
     from safetensors import SafetensorError
     from yaml import YAMLError
@@ -940,7 +946,7 @@ def _load_models(bundles: Sequence[Path]) -> tuple[Forward, ...]:
     models: list[Forward] = []
     for bundle in bundles:
         try:
-            model = FleXrayMlxModel(bundle)
+            models.append(FleXrayMlxModel(bundle))
         # Unreadable or malformed bundle files only; a config that is not a mapping
         # surfaces as KeyError, TypeError or AttributeError. MLX/Metal RuntimeErrors
         # propagate unchanged instead of being reported as incompatible weights.
@@ -958,25 +964,18 @@ def _load_models(bundles: Sequence[Path]) -> tuple[Forward, ...]:
                 reason=f"incompatible {bundle}",
                 hint=_WEIGHTS_HINT,
             ) from error
-        models.append(model_forward(model, bundle))
     return tuple(models)
 
 
-def model_forward(model: Forward, bundle: Path) -> Forward:
-    """Keep deferred tensor-key/architecture errors classified as incompatible assets."""
+MEMBER_RESIDENCY = ("all", "one")
 
-    def forward(images: FloatArray) -> FloatArray:
-        """Run a member and classify deferred checkpoint errors as asset errors."""
-        try:
-            return model(images)
-        except (KeyError, ValueError) as error:
-            raise AssetNotReadyError(
-                f"FleXray weights in {bundle} do not match the released network: {error}",
-                reason=f"incompatible {bundle}",
-                hint=_WEIGHTS_HINT,
-            ) from error
 
-    return forward
+def _execute[T](call: Callable[[], T]) -> T:
+    """Run inference work, reporting ``ValueError``/``RuntimeError`` as ``ModelExecutionError``."""
+    try:
+        return call()
+    except (ValueError, RuntimeError) as error:
+        raise ModelExecutionError(f"FleXray inference failed: {error}") from error
 
 
 def _predict(
@@ -985,21 +984,53 @@ def _predict(
     *,
     preprocessing: ImagePreprocessing,
     settings: TtaSettings,
+    member_residency: str = "all",
 ) -> FloatArray:
-    """Run every member's MLX U-Net on every view; return ``61x256x256``."""
-    from flexray_mlx.tta import predict_with_tta
+    """Run every member's MLX U-Net on every view; return ``61x256x256``.
 
-    models = _load_models(bundles)
-    try:
-        _, probabilities = predict_with_tta(
-            models,
-            prepared,
-            tta_samples=settings.samples,
-            seed=settings.seed,
-            normalizer=preprocessing.normalize,
+    ``"all"`` loads every member first and evaluates pass by pass. ``"one"``
+    keeps one member's weights resident at a time: the views are drawn once,
+    each member writes its per-view probabilities to a private temporary
+    spool and is released, and the spooled terms are then summed in the same
+    pass-major order, so both policies return identical float32 bits. The
+    spool holds ``passes * members`` arrays of ``B x 61 x 256 x 256`` float32.
+    """
+    from flexray_mlx.tta import (
+        mean_probabilities,
+        prepared_views,
+        tta_probabilities,
+        view_probabilities,
+    )
+
+    if member_residency == "all" or len(bundles) == 1:
+        models = _load_models(bundles)
+        probabilities = _execute(
+            lambda: tta_probabilities(
+                models,
+                prepared,
+                tta_samples=settings.samples,
+                seed=settings.seed,
+                normalizer=preprocessing.normalize,
+            )
         )
-    except (ValueError, RuntimeError) as error:
-        raise ModelExecutionError(f"FleXray inference failed: {error}") from error
+        return probabilities[0]
+    views = _execute(lambda: list(prepared_views(prepared, settings, preprocessing.normalize)))
+    with TemporaryDirectory(prefix="flexray-mlx-spool-") as spool:
+        term = [
+            [Path(spool) / f"{view}-{member}.npy" for member in range(len(bundles))]
+            for view in range(len(views))
+        ]
+        for member, bundle in enumerate(bundles):
+            (model,) = _load_models((bundle,))
+            for index, (view, flipped) in enumerate(views):
+                values = _execute(partial(view_probabilities, model, view, flipped))
+                np.save(term[index][member], values)
+            # Release this member before the next one loads.
+            del model
+        probabilities = mean_probabilities(
+            (cast(FloatArray, np.load(path, allow_pickle=False)) for row in term for path in row),
+            len(views) * len(bundles),
+        )
     return probabilities[0]
 
 
@@ -1037,6 +1068,7 @@ def run(
     tta_seed: int | None = None,
     normalization_scheme: str | None = None,
     overwrite: bool = False,
+    member_residency: str = "all",
 ) -> RunResult:
     """Segment one conventional 2D radiograph with the released FleXray network.
 
@@ -1080,6 +1112,11 @@ def run(
             only after every new output is written. Output paths must remain
             separate from each other, the input radiograph and the documented
             model bundle files, including their file aliases.
+        member_residency: ``"all"`` (default) loads every ensemble member before
+            inference. ``"one"`` keeps one member's weights resident at a time and
+            spools its per-view probabilities to a temporary directory
+            (``tta_samples * members`` arrays of 61x256x256 float32); the result is
+            bit-identical. Without ``ensemble`` both values run the same path.
 
     Returns:
         ``outputs`` maps ``mask`` to ``source_image_label.png`` (uint8 0/1 on the
@@ -1093,8 +1130,8 @@ def run(
 
     Raises:
         InvalidInputError: Missing or unreadable input, a non-2D DICOM, an
-            unknown label, an out-of-range threshold, invalid TTA or
-            normalization settings, outputs that alias an input, model asset or
+            unknown label, an out-of-range threshold, invalid TTA,
+            normalization or residency settings, outputs that alias an input, model asset or
             each other, or existing outputs without ``overwrite``.
         AssetNotReadyError: Missing or unreadable assets, an incompatible bundle
             layout or network, or inconsistent member metadata.
@@ -1111,6 +1148,8 @@ def run(
     if not isinstance(cast(object, label_name), str):
         raise InvalidInputError(f"FleXray label_name must be a string, got {label_name!r}")
     ensemble = _require_bool("ensemble", ensemble)
+    if member_residency not in MEMBER_RESIDENCY:
+        raise InvalidInputError(f"FleXray member_residency must be one of {MEMBER_RESIDENCY}")
     overwrite = _require_bool("overwrite", overwrite)
     if (
         isinstance(threshold, bool)
@@ -1206,7 +1245,11 @@ def run(
     except _input_errors() as error:
         raise InvalidInputError(f"Unreadable FleXray radiograph {source_path}: {error}") from error
     probabilities = _predict(
-        admitted.bundles, prepared, preprocessing=preprocessing, settings=settings
+        admitted.bundles,
+        prepared,
+        preprocessing=preprocessing,
+        settings=settings,
+        member_residency=member_residency,
     )
     if probabilities.shape != (CHANNELS, *MODEL_GRID) or not np.isfinite(probabilities).all():
         raise ModelExecutionError("FleXray returned invalid full-channel probabilities")
