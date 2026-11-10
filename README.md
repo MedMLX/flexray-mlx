@@ -11,7 +11,7 @@ Segment anatomical structures in radiographs with FleXray and native MLX.
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-weights-yellow)](https://huggingface.co/MedMLX/flexray-mlx)
 [![MedMLX](https://img.shields.io/badge/MedMLX-runtime-A51C30)](https://github.com/MedMLX/medmlx)
 
-<img src="https://raw.githubusercontent.com/MedMLX/flexray-mlx/v0.2.7/docs/showcase.png" alt="Chest radiograph with lung, heart and individual rib segmentations" width="100%">
+<img src="https://raw.githubusercontent.com/MedMLX/flexray-mlx/main/docs/showcase.png" alt="Chest radiograph with lung, heart and individual rib segmentations" width="100%">
 
 </div>
 
