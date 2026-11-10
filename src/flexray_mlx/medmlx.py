@@ -12,13 +12,14 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from itertools import combinations
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import numpy as np
@@ -1056,6 +1057,39 @@ def _require_bool(name: str, value: object) -> bool:
     return value
 
 
+def _publish(staged: dict[Path, Path]) -> None:
+    """Replace staged artifacts together, restoring earlier files on failure."""
+    recovery = Path(mkdtemp(prefix=".flexray-mlx-backup-", dir=next(iter(staged)).parent))
+    cleanup = True
+    try:
+        backups: dict[Path, Path] = {}
+        for index, path in enumerate(staged):
+            if path.exists() or path.is_symlink():
+                backup = recovery / str(index)
+                os.link(path, backup, follow_symlinks=False)
+                backups[path] = backup
+        changed: list[Path] = []
+        try:
+            for path, temporary in staged.items():
+                os.replace(temporary, path)
+                changed.append(path)
+        except BaseException:
+            try:
+                for path in reversed(changed):
+                    backup = backups.get(path)
+                    if backup is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, path)
+            except OSError as error:
+                cleanup = False
+                raise OSError(f"Cannot restore outputs; backups retained at {recovery}") from error
+            raise
+    finally:
+        if cleanup:
+            shutil.rmtree(recovery)
+
+
 def run(
     *,
     image_path: str | Path,
@@ -1295,8 +1329,7 @@ def run(
         mask.save(partial[MASK_NAME])
         np.save(partial[PROBABILITIES_NAME], probabilities, allow_pickle=False)
         partial[PREDICTION_NAME].write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-        for name, temporary in partial.items():
-            os.replace(temporary, output / name)
+        _publish({output / name: temporary for name, temporary in partial.items()})
     return {
         "outputs": {
             "mask": mask_path.as_posix(),

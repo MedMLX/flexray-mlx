@@ -6,6 +6,7 @@ Reference scripts import only upstream fxr and Torch; tests read recorded arrays
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
@@ -77,6 +78,40 @@ def _image(path: str | Path) -> HostArray:
     """Read a saved image as a NumPy array."""
     with Image.open(path) as image:
         return np.asarray(image).copy()
+
+
+def test_publication_failure_restores_existing_outputs(
+    tmp_path: Path, bundle: Path, stub_network: FloatArray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case, label, threshold = E2E_CASE
+    source = write_case(tmp_path / "inputs", case)
+    output = tmp_path / "out"
+    output.mkdir()
+    old = {output / name: name.encode() for name in (
+        medmlx.DISPLAY_NAME, medmlx.MASK_NAME,
+        medmlx.PROBABILITIES_NAME, medmlx.PREDICTION_NAME,
+    )}
+    for path, contents in old.items():
+        path.write_bytes(contents)
+    replace = os.replace
+    failed = False
+
+    def fail_second(source_path: Path, destination: Path) -> None:
+        nonlocal failed
+        if destination == output / medmlx.MASK_NAME and not failed:
+            failed = True
+            raise OSError("injected publication failure")
+        replace(source_path, destination)
+
+    monkeypatch.setattr(medmlx.os, "replace", fail_second)
+    with pytest.raises(OSError, match="injected publication failure"):
+        medmlx.run(
+            image_path=source, weights_path=bundle, output_dir=output,
+            label_name=label, threshold=threshold, overwrite=True,
+        )
+    for path, contents in old.items():
+        assert path.read_bytes() == contents
+    assert not list(output.glob(".flexray-mlx-*"))
 
 
 @pytest.mark.mlx
