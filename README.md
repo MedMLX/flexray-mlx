@@ -21,7 +21,9 @@ Segment anatomical structures in radiographs with FleXray and native MLX.
 | :--- | :--- |
 | Raster image or single-frame DICOM | Structure masks and probabilities |
 
-Weights: 2.0 GB download, all five ensemble members. Peak MLX memory: 1.2 GB for a 1929×2207 chest radiograph with the default single model.
+| Model | Weights download | Peak MLX memory | Measured on |
+| :--- | ---: | ---: | :--- |
+| `flexray` | 2.0 GB for all five ensemble members | 1.2 GB | 1929×2207 chest radiograph, default single model |
 
 ## Use with MedMLX
 
@@ -55,15 +57,15 @@ result = run(image_path="chest.png", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
-Omitting `weights_path` downloads `MedMLX/flexray-mlx` into the shared MedMLX cache on
-first use. With MedMLX
-installed, `medmlx setup flexray` downloads it ahead of time. For local weights, pass
-a folder containing `ensemble.json` and
-`members/flux0375/{config.yml,label_schema.json,model.safetensors,preprocessing.json}`
-as `weights_path`. Automatic setup prepares the flagship (`ensemble=False`);
-`ensemble=True` requires all five members in an explicit folder.
-
 Use `label_name` to select a structure.
+
+| `ensemble` | Weights |
+| :--- | :--- |
+| `False` (default) | The flagship `flux0375`. Omitting `weights_path` downloads `MedMLX/flexray-mlx` into the shared MedMLX cache on first use; with MedMLX installed, `medmlx setup flexray` downloads it ahead of time |
+| `True` | All five members, in an explicit `weights_path` folder |
+
+A local folder holds `ensemble.json` and
+`members/flux0375/{config.yml,label_schema.json,model.safetensors,preprocessing.json}`.
 
 ### Inputs and outputs
 
@@ -80,9 +82,10 @@ Use `label_name` to select a structure.
 | `normalization_scheme` | `None` keeps the bundle's; or `none`, `minmax`, `percentile_minmax` or `standardize` |
 | `overwrite` | `False` by default; existing outputs are replaced only when `True` |
 
-DICOM files end in `.dcm` or `.dicom` (any case) or have `DICM` at byte 128. Accepting
-a file does not mean the model suits its modality. Output paths must differ from each
-other, the input and the bundle files, including links, even with `overwrite`.
+- **DICOM:** files end in `.dcm` or `.dicom` (any case) or have `DICM` at byte 128.
+  Accepting a file does not mean the model suits its modality.
+- **Output paths** must differ from each other, the input and the bundle files,
+  including links, even with `overwrite`.
 
 | Output | File | Content |
 | --- | --- | --- |
@@ -91,24 +94,28 @@ other, the input and the bundle files, including links, even with `overwrite`.
 | `probabilities` | `probabilities.npy` | float32 61×256×256 sigmoid probabilities on the padded model grid |
 | `prediction` | `prediction.json` | Labels, selected channel, threshold, members and content box |
 
-FleXray thresholds on the model grid and exports no source-grid images; the PNGs are a
-MedMLX addition. The mask is thresholded first, then resized with nearest neighbour to
-the padded canvas and unpadded, which inverts the preprocessing geometry, so no new
-decisions come from interpolation. `run` returns `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
-Missing or incompatible assets raise
-`AssetNotReadyError`; invalid inputs or existing outputs raise `InvalidInputError`;
-non-finite probabilities raise `ModelExecutionError` before anything is written.
+- **Source-grid PNGs:** FleXray thresholds on the model grid and exports no source-grid
+  images; the PNGs are a MedMLX addition. The mask is thresholded first, then resized
+  with nearest neighbour to the padded canvas and unpadded, which inverts the
+  preprocessing geometry, so no new decisions come from interpolation.
+- **Return value:** `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
 
-The [published bundle](https://huggingface.co/MedMLX/flexray-mlx/tree/722d8341570e8b9e1196cf50e57892da84974fcc)
+| Error | Raised when |
+| :--- | :--- |
+| `AssetNotReadyError` | Assets are missing or incompatible |
+| `InvalidInputError` | Inputs are invalid or outputs already exist |
+| `ModelExecutionError` | Probabilities are non-finite; raised before anything is written |
+
+**Ensemble members.** The [published bundle](https://huggingface.co/MedMLX/flexray-mlx/tree/722d8341570e8b9e1196cf50e57892da84974fcc)
 holds only `flux0375`; its `ensemble.json` still lists all five members in order
 (`flux0375`, `flux000`, `flux025`, `flux050`, `flux075`). For `ensemble=True`, use the
 [upstream snapshot](https://huggingface.co/VictorButoi/flexray/tree/6b63ddf09cfdff99aea494e3738cf243a4e22cdb)
 with all five member folders.
 
-Augmented views follow FleXray's `tta_v3` chain: flips, inversion, CLAHE or gamma,
-contrast, sharpness and Gaussian noise. Gamma on negative normalized pixels can produce
-NaN, which the runner rejects. The released weights were trained with percentile
-normalization; other schemes are not validated.
+**Augmentation and normalization.** Augmented views follow FleXray's `tta_v3` chain:
+flips, inversion, CLAHE or gamma, contrast, sharpness and Gaussian noise. Gamma on
+negative normalized pixels can produce NaN, which the runner rejects. The released
+weights were trained with percentile normalization; other schemes are not validated.
 
 ### Python API
 
@@ -122,14 +129,16 @@ model = FleXrayMlxModel(Path("flexray/members/flux0375"))
 logits = model(np.zeros((1, 1, 256, 256), dtype=np.float32))  # Bx1x256x256 -> Bx61x256x256
 ```
 
-The member folder needs the released `config.yml` and `model.safetensors`; loading
-converts convolution weights to MLX layout and every tensor to float32, keeping the
-names. Inputs are prepared images; preparation, sigmoid, ensembling, TTA and
-source-grid restoration are the caller's. `flexray_mlx.tta.predict_with_tta(forward_fn,
-images, tta_samples=..., seed=..., normalizer=...)` takes one or more forward callables
-and already normalized float32 BxCxHxW images, and returns `(logits, probabilities)`;
-pass the `normalize` method of `flexray_mlx.medmlx.ImagePreprocessing` as `normalizer`
-to follow the bundle. Inference requires Apple Silicon with Metal.
+- The member folder needs the released `config.yml` and `model.safetensors`. Loading
+  converts convolution weights to MLX layout and every tensor to float32, keeping the
+  names.
+- Inputs are prepared images; preparation, sigmoid, ensembling, TTA and source-grid
+  restoration are the caller's.
+- `flexray_mlx.tta.predict_with_tta(forward_fn, images, tta_samples=..., seed=..., normalizer=...)`
+  takes one or more forward callables and already normalized float32 BxCxHxW images, and
+  returns `(logits, probabilities)`. Pass the `normalize` method of
+  `flexray_mlx.medmlx.ImagePreprocessing` as `normalizer` to follow the bundle.
+- Inference requires Apple Silicon with Metal.
 
 ## License
 
