@@ -25,21 +25,6 @@ Segment anatomical structures in radiographs with FleXray and native MLX.
 | :--- | ---: | ---: | :--- |
 | `flexray` | 2.0 GB for all five ensemble members | 1.2 GB | 1929×2207 chest radiograph, default single model |
 
-## Use with MedMLX
-
-Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `flexray` from an MCP client. Weights download on first use.
-
-```sh
-uv tool install --python 3.13 "medmlx[segment,mcp]"
-MEDMLX="$(uv tool dir --bin --color never)/medmlx"
-mkdir -p "$HOME/medmlx-work"
-claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
-```
-
-For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe flexray`.
-
-> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
-
 ## Install
 
 ```bash
@@ -139,6 +124,21 @@ logits = model(np.zeros((1, 1, 256, 256), dtype=np.float32))  # Bx1x256x256 -> B
   returns `(logits, probabilities)`. Pass the `normalize` method of
   `flexray_mlx.medmlx.ImagePreprocessing` as `normalizer` to follow the bundle.
 - Inference requires Apple Silicon with Metal.
+
+## Use with MedMLX
+
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `flexray` from an MCP client. Weights download on first use.
+
+```sh
+uv tool install --python 3.13 "medmlx[segment,mcp]"
+MEDMLX="$(uv tool dir --bin --color never)/medmlx"
+mkdir -p "$HOME/medmlx-work"
+claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
+```
+
+For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe flexray`.
+
+> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
 ## License
 
