@@ -80,7 +80,7 @@ A local folder holds `ensemble.json` and
 
 - **Source-grid PNGs:** FleXray thresholds on the model grid and exports no source-grid
   images; the PNGs are a MedMLX addition. The mask is thresholded first, then resized
-  with nearest neighbour to the padded canvas and unpadded, which inverts the
+  with nearest neighbor to the padded canvas and unpadded, which inverts the
   preprocessing geometry, so no new decisions come from interpolation.
 - **Return value:** `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
 

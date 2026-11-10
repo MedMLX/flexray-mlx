@@ -289,7 +289,7 @@ def _interpolation_axis(
 ) -> tuple[IntArray, IntArray, FloatArray]:
     """Per pixel: nearest lower/upper tile index and the weight of the upper tile.
 
-    Tile centres sit at ``(k + 0.5) * tile_size``; indices clamp at the edges.
+    Tile centers sit at ``(k + 0.5) * tile_size``; indices clamp at the edges.
     """
 
     position = np.arange(length, dtype=np.float32) / np.float32(tile_size) - np.float32(0.5)
@@ -307,7 +307,7 @@ def clahe(image: FloatArray, *, clip_limit: float, grid_size: tuple[int, int]) -
     Follows fxr: values are clipped to [0, 1] and quantized to 256 bins per
     channel, histograms are built per tile and clipped at
     ``clip_limit * pixels / 256`` with the excess redistributed, and each pixel
-    interpolates bilinearly between the four nearest tile centres. ``grid_size``
+    interpolates bilinearly between the four nearest tile centers. ``grid_size``
     is ``(rows, cols)`` of tiles, capped at the image size; tiles are rounded up
     to even sizes and the image is padded to fit (reflect, or edge when the
     padding reaches the image size in either direction). Supply two integer tile

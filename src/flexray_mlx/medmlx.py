@@ -893,16 +893,16 @@ def restore_mask(
 
     This inverts ``ImagePreprocessing.prepare``'s geometry: source pixel ``(y, x)``
     lies at ``(y + top, x + left)`` on the canvas the source was padded onto, and
-    takes the model pixel whose footprint contains that pixel's centre under the
-    centre-aligned resize, ``floor((c + 0.5) * n / canvas)``. Integer arithmetic
-    keeps centres that fall exactly on a footprint boundary on the later pixel.
+    takes the model pixel whose footprint contains that pixel's center under the
+    center-aligned resize, ``floor((c + 0.5) * n / canvas)``. Integer arithmetic
+    keeps centers that fall exactly on a footprint boundary on the later pixel.
     Stretching the rounded ``content_box`` instead would move edges by up to half
     a model pixel along the padded axis.
 
     Args:
         probabilities: ``(61, H, W)`` float32 sigmoid probabilities on the model grid.
         channel: Index of the selected label in ``probabilities``.
-        pad_to_square: Whether preprocessing centred the source on a square canvas.
+        pad_to_square: Whether preprocessing centered the source on a square canvas.
         source_size: Source image ``(width, height)`` in pixels (Pillow order).
         threshold: Pixels with probability ``>= threshold`` are foreground.
 

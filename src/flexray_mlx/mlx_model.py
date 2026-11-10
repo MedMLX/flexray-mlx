@@ -204,7 +204,7 @@ def _conv(weights: Mapping[str, array], x: array, prefix: str, *, padding: int) 
 def _norm(weights: Mapping[str, array], x: array, prefix: str) -> array:
     """Apply per-instance spatial normalization with learned scale and bias.
 
-    Two-pass mean and centred variance, then ``(x - mean) * rsqrt(var + eps) *
+    Two-pass mean and centered variance, then ``(x - mean) * rsqrt(var + eps) *
     gamma + beta`` in that operation order. Under compilation MLX fuses the
     elementwise tail into one kernel; the reductions stay separate.
     """

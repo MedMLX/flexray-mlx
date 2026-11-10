@@ -61,9 +61,9 @@ LOGIT_SEED = 4242
 
 
 def source_grid(model: HostArray, height: int, width: int) -> HostArray:
-    """Sample a 2D model-grid array at each source pixel centre of a square-padded input.
+    """Sample a 2D model-grid array at each source pixel center of a square-padded input.
 
-    Inverts the release preprocessing (centre on a zero-padded square, then resize
+    Inverts the release preprocessing (center on a zero-padded square, then resize
     to the model grid) in exact integer arithmetic: source pixel ``(y, x)`` sits at
     canvas ``(y + top, x + left)`` and takes model pixel ``floor((c + 0.5) * n / side)``.
     """
