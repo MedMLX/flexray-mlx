@@ -1,5 +1,6 @@
 """Upstream UNet parity."""
 
+import os
 from pathlib import Path
 from typing import cast
 
@@ -23,6 +24,10 @@ def test_full_model_matches_upstream_unet(tmp_path: Path) -> None:
         metadata = json.loads(str(fixture["metadata"]))
         assert metadata["flexray_revision"] == UPSTREAM_REVISION
         write_bundle(tmp_path, weight_seed=int(fixture["weight_seed"]))
+    default = Path(__file__).resolve().parents[1] / "work/real-reference"
+    directory = Path(os.environ.get("MEDMLX_TEST_REFERENCES", str(default)))
+    with np.load(directory / "flexray_full.npz", allow_pickle=False) as fixture:
+        assert json.loads(str(fixture["real_metadata"]))["flexray_revision"] == UPSTREAM_REVISION
         actual = FleXrayMlxModel(tmp_path)(fixture["images"])
         expected = fixture["output_nhwc"].transpose(0, 3, 1, 2)
         assert actual.shape == (1, 61, 256, 256)

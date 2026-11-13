@@ -46,7 +46,14 @@ def _recording(name: str) -> dict[str, HostArray]:
     """Load a darwin-arm64 recording and check its pinned fxr revision."""
     with np.load(FIXTURES / f"{name}.npz", allow_pickle=False) as data:
         assert json.loads(str(data["metadata"]))["flexray_revision"] == UPSTREAM_REVISION
-        return {key: data[key] for key in data.files}
+        arrays = {key: data[key] for key in data.files}
+    if name in {"runner_reference", "runner_preprocessing", "runner_run"}:
+        default = Path(__file__).resolve().parents[1] / "work/real-reference"
+        directory = Path(os.environ.get("MEDMLX_TEST_REFERENCES", str(default)))
+        with np.load(directory / f"{name}.npz", allow_pickle=False) as data:
+            assert json.loads(str(data["real_metadata"]))["flexray_revision"] == UPSTREAM_REVISION
+            arrays.update({key: data[key] for key in data.files})
+    return arrays
 
 
 @pytest.fixture(scope="module")
@@ -253,8 +260,7 @@ def test_percentile_normalization_matches_torch_quantile(
     reference: dict[str, HostArray], index: int
 ) -> None:
     """Compare percentile normalization with recorded Torch quantiles."""
-    # torch.quantile interpolates with fused multiply-adds; unfused float32
-    # arithmetic differs in the last bit for some of these samples.
+    # Compare each radiograph tile with Torch's percentile interpolation.
     preprocessing = medmlx.ImagePreprocessing(
         normalization_scheme="percentile_minmax", percentiles=PERCENTILE_PAIRS[index]
     )
@@ -275,7 +281,7 @@ def test_member_probabilities_match_torch_sigmoid_and_mean(
         """Return a member whose forward pass yields recorded logits."""
         return lambda _images: value
 
-    images = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    images = seeded_percentile_batch()[:1, :1, :1, :1]
     _, single = predict_with_tta(replay(logits[0]), images)
     _, ensemble = predict_with_tta([replay(value) for value in logits], images)
     assert single.dtype == ensemble.dtype == np.float32

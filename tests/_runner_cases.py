@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -34,13 +35,35 @@ PREPROCESSING_VARIANTS: dict[str, dict[str, object]] = {
     "small_scalar": {"image_size": [20, 28], "scale": "none", "mean": 100.0, "std": 50.0},
 }
 LABEL_NAMES = [
-    "background", "skull", "scapulae", "clavicles", "humeri", "phalanges", "metacarpals",
-    "carpals", "radii", "ulnae", "tibiae", "femurs", "patellae", "fibulae", "metatarsals",
-    "tarsals", "toes", *(f"rib_{index}" for index in range(1, 13)), "sternum",
+    "background",
+    "skull",
+    "scapulae",
+    "clavicles",
+    "humeri",
+    "phalanges",
+    "metacarpals",
+    "carpals",
+    "radii",
+    "ulnae",
+    "tibiae",
+    "femurs",
+    "patellae",
+    "fibulae",
+    "metatarsals",
+    "tarsals",
+    "toes",
+    *(f"rib_{index}" for index in range(1, 13)),
+    "sternum",
     *(f"vertebra_c{index}" for index in range(1, 8)),
     *(f"vertebra_t{index}" for index in range(1, 13)),
     *(f"vertebra_l{index}" for index in range(1, 6)),
-    "hips", "sacrum", "kidneys", "liver", "spleen", "lungs", "heart",
+    "hips",
+    "sacrum",
+    "kidneys",
+    "liver",
+    "spleen",
+    "lungs",
+    "heart",
 ]
 MEMBERS = ("flux0375", "flux000", "flux025", "flux050", "flux075")
 CONTENT_BOX_SIZES = ((37, 53), (53, 37), (1, 100), (100, 1), (256, 256), (3, 2), (1000, 999))
@@ -75,17 +98,17 @@ def source_grid(model: HostArray, height: int, width: int) -> HostArray:
     return model[rows[:, None], columns]
 
 
-def _ramp(height: int, width: int, seed: int) -> DoubleArray:
-    """A smooth radiograph-like ramp with seeded texture in [0, 1]."""
-
-    rng = np.random.default_rng(seed)
-    yy, xx = np.mgrid[0:height, 0:width].astype(np.float64)
-    base = 0.5 + 0.35 * np.sin(yy / max(height, 2) * 3.1) * np.cos(xx / max(width, 2) * 2.3)
-    return np.clip(base + rng.normal(0, 0.08, (height, width)), 0.0, 1.0)
+def radiograph(height: int, width: int) -> DoubleArray:
+    """Resize the sourced chest radiograph to the test's pixel grid."""
+    default = Path.home() / ".cache/medmlx/test-data/chest_xray.jpg"
+    path = os.environ.get("MEDMLX_TEST_XRAY", str(default))
+    with Image.open(path) as source:
+        image = source.convert("L").resize((width, height), Image.Resampling.BILINEAR)
+        return np.asarray(image, dtype=np.float64) / 255.0
 
 
 def _write_dicom(path: Path, pixels: HostArray, *, modality: str, monochrome1: bool) -> None:
-    """Write a synthetic DICOM input for runner preparation tests."""
+    """Wrap the sourced pixels in DICOM for runner preparation tests."""
     from pydicom.dataset import Dataset, FileMetaDataset
     from pydicom.uid import ExplicitVRLittleEndian
 
@@ -112,59 +135,60 @@ def _write_dicom(path: Path, pixels: HostArray, *, modality: str, monochrome1: b
 
 
 def write_case(directory: Path, name: str) -> Path:
-    """Write one named synthetic radiograph and return its path."""
+    """Write the chest radiograph in one named format and return its path."""
 
     directory.mkdir(parents=True, exist_ok=True)
     if name == "l8":
         path = directory / "l8.png"
-        Image.fromarray(np.rint(_ramp(37, 53, 1) * 255).astype(np.uint8), mode="L").save(path)
+        Image.fromarray(np.rint(radiograph(37, 53) * 255).astype(np.uint8), mode="L").save(path)
     elif name == "l8_e2e":
         path = directory / "l8_e2e.png"
-        Image.fromarray(np.rint(_ramp(120, 90, 9) * 255).astype(np.uint8), mode="L").save(path)
+        Image.fromarray(np.rint(radiograph(120, 90) * 255).astype(np.uint8), mode="L").save(path)
     elif name == "exif":
         path = directory / "exif.png"
-        image = Image.fromarray(np.rint(_ramp(29, 47, 2) * 255).astype(np.uint8), mode="L")
+        image = Image.fromarray(np.rint(radiograph(29, 47) * 255).astype(np.uint8), mode="L")
         exif = Image.Exif()
         exif[0x0112] = 6
         image.save(path, exif=exif)
     elif name == "i16":
         path = directory / "i16.png"
-        values = np.rint(_ramp(41, 29, 3) * 60000).astype(np.uint16)
+        values = np.rint(radiograph(41, 29) * 60000).astype(np.uint16)
         Image.fromarray(values).save(path)
     elif name == "rgba":
         path = directory / "rgba.png"
-        rng = np.random.default_rng(4)
-        rgba = rng.integers(0, 256, (23, 31, 4), dtype=np.uint8)
-        rgba[..., 3] = np.where(rng.random((23, 31)) < 0.3, 0, rgba[..., 3])
+        pixels = np.rint(radiograph(23, 31) * 255).astype(np.uint8)
+        rgba = np.stack((pixels, pixels, pixels, np.where(pixels < 64, 0, 255)), axis=-1).astype(
+            np.uint8
+        )
         Image.fromarray(rgba, mode="RGBA").save(path)
     elif name == "palette":
         path = directory / "palette.png"
-        rng = np.random.default_rng(5)
-        image = Image.fromarray(rng.integers(0, 16, (26, 18), dtype=np.uint8), mode="P")
+        indices = np.rint(radiograph(26, 18) * 15).astype(np.uint8)
+        image = Image.fromarray(indices, mode="P")
         image.putpalette([value for index in range(16) for value in (index * 16, 255 - index, 7)])
         image.info["transparency"] = 3
         image.save(path, transparency=3)
     elif name == "bit":
         path = directory / "bit.png"
-        Image.fromarray(_ramp(19, 27, 6) > 0.5).save(path)
+        Image.fromarray(radiograph(19, 27) > 0.5).save(path)
     elif name == "float_tiff":
         path = directory / "float.tiff"
-        Image.fromarray((_ramp(33, 21, 7) * 400 - 50).astype(np.float32), mode="F").save(path)
+        Image.fromarray((radiograph(33, 21) * 400 - 50).astype(np.float32), mode="F").save(path)
     elif name == "int32_tiff":
         path = directory / "int32.tiff"
-        values = (_ramp(25, 36, 8) * 2_000_000 - 700_000).astype(np.int32)
+        values = (radiograph(25, 36) * 2_000_000 - 700_000).astype(np.int32)
         Image.fromarray(values, mode="I").save(path)
     elif name == "dicom_cr":
         path = directory / "cr.dcm"
-        pixels = np.rint(_ramp(45, 38, 10) * 4095).astype(np.uint16)
+        pixels = np.rint(radiograph(45, 38) * 4095).astype(np.uint16)
         _write_dicom(path, pixels, modality="CR", monochrome1=True)
     elif name == "dicom_noext":
         path = directory / "dx_without_suffix"
-        pixels = np.rint(_ramp(31, 44, 11) * 4000).astype(np.uint16)
+        pixels = np.rint(radiograph(31, 44) * 4000).astype(np.uint16)
         _write_dicom(path, pixels, modality="DX", monochrome1=False)
     elif name == "dicom_ct":
         path = directory / "ct.dcm"
-        pixels = np.rint(_ramp(16, 16, 12) * 4000).astype(np.uint16)
+        pixels = np.rint(radiograph(16, 16) * 4000).astype(np.uint16)
         _write_dicom(path, pixels, modality="CT", monochrome1=False)
     else:
         raise KeyError(name)
@@ -172,8 +196,17 @@ def write_case(directory: Path, name: str) -> Path:
 
 
 CASES = (
-    "l8", "exif", "i16", "rgba", "palette", "bit", "float_tiff", "int32_tiff", "dicom_cr",
-    "dicom_noext", "dicom_ct",
+    "l8",
+    "exif",
+    "i16",
+    "rgba",
+    "palette",
+    "bit",
+    "float_tiff",
+    "int32_tiff",
+    "dicom_cr",
+    "dicom_noext",
+    "dicom_ct",
 )
 
 
@@ -204,12 +237,10 @@ def seeded_member_logits(members: int, seed: int = LOGIT_SEED) -> list[FloatArra
 PERCENTILE_PAIRS = ((0.5, 99.5), (2.0, 97.5), (10.0, 90.0), (0.0, 100.0), (33.3, 66.6))
 
 
-def seeded_percentile_batch(seed: int = 2) -> FloatArray:
-    """Heavy-tailed float32 samples; with seed 2, fused and unfused percentile
-    interpolation differ in the last bit for three bounds of the first two pairs."""
-
-    rng = np.random.default_rng(seed)
-    return (rng.standard_cauchy((16, 1, 13, 17)) * 3).astype(np.float32)
+def seeded_percentile_batch() -> FloatArray:
+    """Sixteen distinct tiles from the source radiograph for quantile comparisons."""
+    image = radiograph(52, 68).astype(np.float32)
+    return image.reshape(4, 13, 4, 17).transpose(0, 2, 1, 3).reshape(16, 1, 13, 17)
 
 
 def write_release_bundle(

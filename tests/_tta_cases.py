@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from _arrays import FloatArray
+from _runner_cases import radiograph
 
 WEIGHT_SEEDS = (1729, 1730, 1731, 1732, 1733)
 INPUT_SEED = 2718
@@ -21,20 +22,24 @@ TTA_CASES = (
 
 
 def seeded_input(shape: tuple[int, ...] = (2, 1, 24, 40)) -> FloatArray:
-    """Create the reproducible float32 image batch used in TTA comparisons."""
-    return np.random.default_rng(INPUT_SEED).uniform(0, 1, shape).astype(np.float32)
+    """Resize the chest X-ray and alternate its reflection across leading axes."""
+    height, width = shape[-2:]
+    image = radiograph(height, width).astype(np.float32)
+    count = int(np.prod(shape[:-2]))
+    values = np.stack([image if i % 2 == 0 else image[:, ::-1] for i in range(count)])
+    return values.reshape(shape)
 
 
 def standardize_inputs() -> dict[str, FloatArray]:
     """Build varied input distributions for source normalization comparisons."""
-    rng = np.random.default_rng(17)
-    ordinary = rng.normal(size=(16, 1, 13, 17)).astype(np.float32)
+    ordinary = seeded_input((16, 1, 13, 17))
+    value = seeded_input((1, 1))[0, 0]
     return {
         "ordinary": ordinary,
         "offset": (ordinary + np.float32(1e5)),
-        "constant": np.full((2, 1, 3, 5), 7, dtype=np.float32),
-        "near_constant": np.float32(7) + ordinary * np.float32(1e-5),
-        "singleton": np.full((2, 1, 1, 1), 7, dtype=np.float32),
+        "constant": np.full((2, 1, 3, 5), value, dtype=np.float32),
+        "near_constant": value + ordinary * np.float32(1e-5),
+        "singleton": np.full((2, 1, 1, 1), value, dtype=np.float32),
         "model_grid": seeded_input((1, 1, 256, 256)),
         "multichannel": seeded_input((3, 3, 13, 17)),
     }

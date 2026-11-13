@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import cast
 
@@ -28,12 +29,17 @@ from flexray_mlx.tta import augment_batch, clahe, predict_with_tta
 def recorded() -> dict[str, HostArray]:
     """Load the fxr TTA recordings and verify their provenance and weight seeds."""
     arrays: dict[str, HostArray] = {}
+    default = Path(__file__).resolve().parents[1] / "work/real-reference"
+    directory = Path(os.environ.get("MEDMLX_TEST_REFERENCES", str(default)))
     for name in ("transforms", "predictions", "runner_percentile_minmax", "runner_standardize"):
         with np.load(FIXTURES / f"tta_{name}.npz", allow_pickle=False) as data:
             metadata = json.loads(str(data["metadata"]))
             assert metadata["flexray_revision"] == UPSTREAM_REVISION
             assert metadata["weight_seeds"] == list(WEIGHT_SEEDS)
             arrays.update({key: data[key] for key in data.files if key != "metadata"})
+        with np.load(directory / f"tta_{name}.npz", allow_pickle=False) as data:
+            assert json.loads(str(data["real_metadata"]))["flexray_revision"] == UPSTREAM_REVISION
+            arrays.update({key: data[key] for key in data.files if key != "real_metadata"})
     return arrays
 
 
