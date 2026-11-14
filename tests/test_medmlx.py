@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
+import medmlx_core.weights as core_weights
 import numpy as np
 import pytest
 from _reference_cases import FIXTURES, UPSTREAM_REVISION
@@ -40,7 +41,7 @@ from flexray_mlx.tta import Forward, predict_with_tta
 
 PROBABILITY_BOUND = 9e-3
 # Untyped view of the runner for deserialized invalid argument values.
-run_untyped = cast(Callable[..., RunResult], medmlx.run)
+run_untyped = cast(Callable[..., RunResult], medmlx.segment)
 
 
 def _recording(name: str) -> dict[str, HostArray]:
@@ -88,40 +89,6 @@ def _image(path: str | Path) -> HostArray:
         return np.asarray(image).copy()
 
 
-def test_publication_failure_restores_existing_outputs(
-    tmp_path: Path, bundle: Path, stub_network: FloatArray, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    case, label, threshold = E2E_CASE
-    source = write_case(tmp_path / "inputs", case)
-    output = tmp_path / "out"
-    output.mkdir()
-    old = {output / name: name.encode() for name in (
-        medmlx.DISPLAY_NAME, medmlx.MASK_NAME,
-        medmlx.PROBABILITIES_NAME, medmlx.PREDICTION_NAME,
-    )}
-    for path, contents in old.items():
-        path.write_bytes(contents)
-    replace = os.replace
-    failed = False
-
-    def fail_second(source_path: Path, destination: Path) -> None:
-        nonlocal failed
-        if destination == output / medmlx.MASK_NAME and not failed:
-            failed = True
-            raise OSError("injected publication failure")
-        replace(source_path, destination)
-
-    monkeypatch.setattr(medmlx.os, "replace", fail_second)
-    with pytest.raises(OSError, match="injected publication failure"):
-        medmlx.run(
-            image_path=source, weights_path=bundle, output_dir=output,
-            label_name=label, threshold=threshold, overwrite=True,
-        )
-    for path, contents in old.items():
-        assert path.read_bytes() == contents
-    assert not list(output.glob(".flexray-mlx-*"))
-
-
 @pytest.mark.mlx
 def test_run_matches_upstream_with_seeded_network(tmp_path: Path) -> None:
     """Compare seeded Metal inference and exported outputs with the upstream recording."""
@@ -130,7 +97,7 @@ def test_run_matches_upstream_with_seeded_network(tmp_path: Path) -> None:
     image = write_case(tmp_path / "inputs", case)
     weights = write_release_bundle(tmp_path / "flexray", weight_seed=int(fixture["weight_seed"]))
     output_dir = tmp_path / "out"
-    result = medmlx.run(
+    result = medmlx.segment(
         image_path=str(image),
         weights_path=str(weights),
         output_dir=str(output_dir),
@@ -161,8 +128,8 @@ def test_run_matches_upstream_with_seeded_network(tmp_path: Path) -> None:
     stable = source_margin > PROBABILITY_BOUND
     expected_mask = source_grid((channel >= threshold).astype(np.uint8), 120, 90)
     assert np.array_equal(mask[stable], expected_mask[stable])
-    assert np.array_equal(_image(outputs["display_source"]), fixture["display"])
-    prediction = json.loads(Path(outputs["prediction"]).read_text(encoding="utf-8"))
+    assert np.array_equal(_image(outputs["preview"]), fixture["display"])
+    prediction = json.loads(Path(outputs["metadata"]).read_text(encoding="utf-8"))
     assert prediction["content_box_tlbr"] == fixture["content_box"].tolist() == [0, 32, 256, 224]
     assert prediction["selected_channel"] == 59 and prediction["label_names"] == LABEL_NAMES
 
@@ -185,7 +152,7 @@ def test_runner_exports_recorded_upstream_unet_prediction(
         return (forward,)
 
     monkeypatch.setattr(medmlx, "_load_models", load_models)
-    result = medmlx.run(
+    result = medmlx.segment(
         image_path=write_case(tmp_path, case),
         weights_path=bundle,
         output_dir=tmp_path / "out",
@@ -197,8 +164,8 @@ def test_runner_exports_recorded_upstream_unet_prediction(
     assert np.array_equal(np.load(outputs["probabilities"]), expected)
     decisions = (cast(FloatArray, fixture["probabilities_channel"]) >= threshold).astype(np.uint8)
     assert np.array_equal(_image(outputs["mask"]), source_grid(decisions, 120, 90))
-    assert np.array_equal(_image(outputs["display_source"]), fixture["display"])
-    prediction = json.loads(Path(outputs["prediction"]).read_text())
+    assert np.array_equal(_image(outputs["preview"]), fixture["display"])
+    prediction = json.loads(Path(outputs["metadata"]).read_text())
     assert prediction["content_box_tlbr"] == fixture["content_box"].tolist()
     assert prediction["tta_samples"] == 1 and prediction["tta_seed"] is None
 
@@ -215,7 +182,7 @@ def test_run_postprocessing_matches_upstream_decisions(
 ) -> None:
     """Compare restored masks and output metadata with upstream cases."""
     output_dir = tmp_path / "out"
-    result = medmlx.run(
+    result = medmlx.segment(
         image_path=write_case(tmp_path / "inputs", case),
         weights_path=bundle,
         output_dir=output_dir,
@@ -228,9 +195,9 @@ def test_run_postprocessing_matches_upstream_decisions(
     expected_mask = source_grid(decisions.astype(np.uint8), height, width)
     mask = _image(outputs["mask"])
     assert mask.dtype == np.uint8 and np.array_equal(mask, expected_mask)
-    assert np.array_equal(_image(outputs["display_source"]), reference[f"restore/{case}/display"])
+    assert np.array_equal(_image(outputs["preview"]), reference[f"restore/{case}/display"])
     assert np.array_equal(np.load(outputs["probabilities"]), stub_network)
-    prediction = json.loads(Path(outputs["prediction"]).read_text(encoding="utf-8"))
+    prediction = json.loads(Path(outputs["metadata"]).read_text(encoding="utf-8"))
     assert prediction["content_box_tlbr"] == reference[f"restore/{case}/content_box"].tolist()
     assert prediction["selected_channel"] == LABEL_NAMES.index(label)
 
@@ -319,7 +286,7 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
         """Fail if the runner asks for weights before checking its arguments."""
         pytest.fail("weights were requested before the arguments were checked")
 
-    monkeypatch.setattr(medmlx, "weights_dir", download)
+    monkeypatch.setattr(core_weights, "weights_dir", download)
     output = tmp_path / "out"
     changes: dict[str, dict[str, object]] = {
         "missing_image": {"image_path": tmp_path / "absent.png"},
@@ -348,6 +315,6 @@ def test_unusable_bundles_raise_asset_not_ready(tmp_path: Path, bundle: Path, da
         (bundle / "members/flux0375/model.safetensors").unlink()
     # "tensors": the real network runs on an admitted bundle that holds no tensors.
     with pytest.raises(AssetNotReadyError):
-        medmlx.run(
+        medmlx.segment(
             image_path=write_case(tmp_path, "l8"), weights_path=bundle, output_dir=tmp_path / "out"
         )

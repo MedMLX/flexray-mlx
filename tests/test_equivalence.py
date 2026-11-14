@@ -49,7 +49,7 @@ def test_checkpoint_mismatch_is_rejected_at_load(tmp_path: Path, problem: str) -
         state["down_blocks.3.layers.3.weight"] = state["down_blocks.3.layers.3.weight"][:, :-1]
     root = write_release_bundle(tmp_path / "weights", state_dict=state)
     with pytest.raises(AssetNotReadyError, match="do not match the released network"):
-        medmlx.run(
+        medmlx.segment(
             image_path=write_case(tmp_path / "inputs", "l8"),
             weights_path=root,
             output_dir=tmp_path / "out",

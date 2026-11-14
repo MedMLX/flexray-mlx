@@ -1,22 +1,30 @@
-"""Native MLX implementation of FleXray."""
+"""Radiograph anatomy segmentation with FleXray in native MLX.
+
+``segment`` runs one radiograph end to end. Names load on first access, so
+importing the package (or the medmlx declaration) does not import MLX.
+"""
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from flexray_mlx.mlx_model import FleXrayMlxModel
+    from flexray_mlx.medmlx import segment as segment
+    from flexray_mlx.mlx_model import FleXrayMlxModel as FleXrayMlxModel
 
-__all__ = ["FleXrayMlxModel"]
+__all__ = ["FleXrayMlxModel", "segment"]
 
 __version__ = "0.2.7"
 
+_EXPORTS = {"FleXrayMlxModel": "flexray_mlx.mlx_model", "segment": "flexray_mlx.medmlx"}
+
 
 def __getattr__(name: str) -> object:
-    # MLX loads with the network, so importing the medmlx declaration stays light.
-    """Load the native model lazily when its public name is requested."""
-    if name == "FleXrayMlxModel":
-        from flexray_mlx.mlx_model import FleXrayMlxModel
-
-        return FleXrayMlxModel
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    """Load a public name from its module on first access and cache it."""
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module), name)
+    globals()[name] = value
+    return value

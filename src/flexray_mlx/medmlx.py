@@ -11,15 +11,12 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import shutil
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
-from itertools import combinations
 from pathlib import Path
-from tempfile import TemporaryDirectory, mkdtemp
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Literal, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import numpy as np
@@ -29,8 +26,9 @@ from medmlx_core.errors import (
     MissingDependencyError,
     ModelExecutionError,
 )
+from medmlx_core.files import input_file, output_targets, publish
 from medmlx_core.outputs import artifact
-from medmlx_core.weights import weights_dir, weights_revision
+from medmlx_core.weights import model_folder, weights_revision
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from flexray_mlx._types import FloatArray, IntArray, JsonValue, RealArray, RunResult
@@ -43,7 +41,7 @@ MODEL = {
     "id": "flexray",
     "label": "FleXray",
     "task": "segmentation",
-    "run": "flexray_mlx.medmlx:run",
+    "run": "flexray_mlx.medmlx:segment",
     # Measured MLX peak for a 1929x2207 chest radiograph, single model; larger inputs need more.
     "peak_memory_gb": 1.2,
     "summary": (
@@ -60,6 +58,13 @@ DISPLAY_NAME = "source_image.png"
 MASK_NAME = "source_image_label.png"
 PROBABILITIES_NAME = "probabilities.npy"
 PREDICTION_NAME = "prediction.json"
+# Output roles and their file names inside ``output_dir``.
+_FILES = {
+    "mask": MASK_NAME,
+    "preview": DISPLAY_NAME,
+    "probabilities": PROBABILITIES_NAME,
+    "metadata": PREDICTION_NAME,
+}
 _BUNDLE_FILES = (
     "config.yml",
     "label_schema.json",
@@ -1060,40 +1065,7 @@ def _require_bool(name: str, value: object) -> bool:
     return value
 
 
-def _publish(staged: dict[Path, Path]) -> None:
-    """Replace staged artifacts together, restoring earlier files on failure."""
-    recovery = Path(mkdtemp(prefix=".flexray-mlx-backup-", dir=next(iter(staged)).parent))
-    cleanup = True
-    try:
-        backups: dict[Path, Path] = {}
-        for index, path in enumerate(staged):
-            if path.exists() or path.is_symlink():
-                backup = recovery / str(index)
-                os.link(path, backup, follow_symlinks=False)
-                backups[path] = backup
-        changed: list[Path] = []
-        try:
-            for path, temporary in staged.items():
-                os.replace(temporary, path)
-                changed.append(path)
-        except BaseException:
-            try:
-                for path in reversed(changed):
-                    backup = backups.get(path)
-                    if backup is None:
-                        path.unlink(missing_ok=True)
-                    else:
-                        os.replace(backup, path)
-            except OSError as error:
-                cleanup = False
-                raise OSError(f"Cannot restore outputs; backups retained at {recovery}") from error
-            raise
-    finally:
-        if cleanup:
-            shutil.rmtree(recovery)
-
-
-def run(
+def segment(
     *,
     image_path: str | Path,
     weights_path: str | Path | None = None,
@@ -1157,14 +1129,14 @@ def run(
 
     Returns:
         ``outputs`` maps ``mask`` to ``source_image_label.png`` (uint8 0/1 on the
-        source pixel grid), ``display_source`` to ``source_image.png`` (the 8-bit
+        source pixel grid), ``preview`` to ``source_image.png`` (the 8-bit
         grayscale source), ``probabilities`` to ``probabilities.npy`` (float32
-        ``61x256x256`` on the model grid) and ``prediction`` to
+        ``61x256x256`` on the model grid) and ``metadata`` to
         ``prediction.json``. ``artifacts`` describes them, all in ``pixel`` space
         (none has an affine): ``mask`` is a ``binary_mask`` with one label (value 1,
-        named ``label_name``) and ``display_source`` is a ``preview``, both on the
+        named ``label_name``) and ``preview`` is a ``preview``, both on the
         grid of ``image_path``; ``probabilities`` is a ``scalar_field`` on the model
-        grid; ``prediction`` is a ``report``. ``details`` holds the selected label and channel,
+        grid; ``metadata`` is a ``report``. ``details`` holds the selected label and channel,
         threshold, members, TTA settings, normalization scheme, source size as
         ``[width, height]``, the content box as ``[top, left, bottom, right]`` in
         model-grid pixels (exclusive bottom/right) and the mask pixel count.
@@ -1182,16 +1154,12 @@ def run(
             output file is written.
     """
 
-    source_path = Path(image_path).expanduser()
-    if not source_path.is_file():
-        raise InvalidInputError(f"Missing FleXray input radiograph: {source_path}")
-    source_path = source_path.resolve()
+    source_path = input_file("image_path", image_path).resolve()
     if not isinstance(cast(object, label_name), str):
         raise InvalidInputError(f"FleXray label_name must be a string, got {label_name!r}")
     ensemble = _require_bool("ensemble", ensemble)
     if cast(object, member_residency) not in MEMBER_RESIDENCY:
         raise InvalidInputError(f"FleXray member_residency must be one of {MEMBER_RESIDENCY}")
-    overwrite = _require_bool("overwrite", overwrite)
     if (
         isinstance(threshold, bool)
         or not isinstance(cast(object, threshold), int | float)
@@ -1210,29 +1178,8 @@ def run(
         raise InvalidInputError(
             f"normalization_scheme must be one of {sorted(_NORMALIZATION_SCHEMES)}, or None"
         )
-    output = Path(output_dir).expanduser().resolve()
-    if output.exists() and not output.is_dir():
-        raise InvalidInputError(f"FleXray output_dir is not a directory: {output}")
-    names = (DISPLAY_NAME, MASK_NAME, PROBABILITIES_NAME, PREDICTION_NAME)
-    destinations = tuple(output / name for name in names)
-    # resolve() catches symlink aliases and samefile() catches hard links.
-    if any(
-        path.resolve() == source_path or (path.exists() and path.samefile(source_path))
-        for path in destinations
-    ):
-        raise InvalidInputError("FleXray outputs must be separate from the input radiograph")
-    if any(
-        first.resolve() == second.resolve()
-        or (first.exists() and second.exists() and first.samefile(second))
-        for first, second in combinations(destinations, 2)
-    ):
-        raise InvalidInputError("FleXray outputs must not refer to the same file")
-    existing = [path.as_posix() for path in destinations if path.exists() or path.is_symlink()]
-    if existing and not overwrite:
-        raise InvalidInputError(
-            f"FleXray outputs already exist: {', '.join(existing)}; "
-            "pass overwrite=True to replace them"
-        )
+    targets = output_targets(output_dir, _FILES, overwrite=overwrite, inputs=[source_path])
+    destinations = tuple(targets.values())
     try:
         source = display_image(source_path)
     except InvalidInputError:
@@ -1242,9 +1189,7 @@ def run(
         raise InvalidInputError(f"Unreadable FleXray radiograph {source_path}: {error}") from error
 
     # Every argument the bundle does not define is checked; only now may weights download.
-    weights_root = (
-        weights_dir("flexray") if weights_path is None else Path(weights_path).expanduser()
-    )
+    weights_root = model_folder("flexray", weights_path)
     model_assets = (
         weights_root / "ensemble.json",
         *(weights_root / "members" / member / name for member in MEMBERS for name in _BUNDLE_FILES),
@@ -1304,11 +1249,6 @@ def run(
         threshold=threshold,
     )
 
-    output.mkdir(parents=True, exist_ok=True)
-    display_path = output / DISPLAY_NAME
-    mask_path = output / MASK_NAME
-    probabilities_path = output / PROBABILITIES_NAME
-    prediction_path = output / PREDICTION_NAME
     members = [bundle.name for bundle in admitted.bundles]
     record = {
         "schema_version": PREDICTION_SCHEMA,
@@ -1329,20 +1269,21 @@ def run(
         "probability_mode": "multilabel",
         "overlay_is_source_grid": True,
     }
-    # Private staging keeps predictable top-level symlinks away from the writers.
-    with TemporaryDirectory(prefix=".flexray-mlx-", dir=output) as staging:
-        partial = {name: Path(staging) / name for name in names}
-        source.save(partial[DISPLAY_NAME])
-        mask.save(partial[MASK_NAME])
-        np.save(partial[PROBABILITIES_NAME], probabilities, allow_pickle=False)
-        partial[PREDICTION_NAME].write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-        _publish({output / name: temporary for name, temporary in partial.items()})
+    # Writers get private staging paths, away from predictable top-level symlinks.
+    publish({
+        targets["preview"]: source.save,
+        targets["mask"]: mask.save,
+        targets["probabilities"]: lambda path: np.save(path, probabilities, allow_pickle=False),
+        targets["metadata"]: lambda path: path.write_text(
+            json.dumps(record, indent=2) + "\n", encoding="utf-8"
+        ),
+    })
     return {
         "outputs": {
-            "mask": mask_path.as_posix(),
-            "display_source": display_path.as_posix(),
-            "probabilities": probabilities_path.as_posix(),
-            "prediction": prediction_path.as_posix(),
+            "mask": targets["mask"].as_posix(),
+            "preview": targets["preview"].as_posix(),
+            "probabilities": targets["probabilities"].as_posix(),
+            "metadata": targets["metadata"].as_posix(),
         },
         "artifacts": {
             "mask": artifact(
@@ -1351,11 +1292,9 @@ def run(
                 grid_of="image_path",
                 labels=[{"value": 1, "name": label_name}],
             ),
-            "display_source": artifact(
-                kind="preview", coordinate_space="pixel", grid_of="image_path"
-            ),
+            "preview": artifact(kind="preview", coordinate_space="pixel", grid_of="image_path"),
             "probabilities": artifact(kind="scalar_field", coordinate_space="pixel"),
-            "prediction": artifact(kind="report", coordinate_space="not_applicable"),
+            "metadata": artifact(kind="report", coordinate_space="not_applicable"),
         },
         "details": {
             "weights_revision": weights_revision(weights_root),

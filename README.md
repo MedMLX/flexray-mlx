@@ -34,9 +34,9 @@ uv pip install "flexray-mlx>=0.2.7"
 ## Run
 
 ```python
-from flexray_mlx.medmlx import run
+from flexray_mlx import segment
 
-result = run(image_path="chest.png", output_dir="out")
+result = segment(image_path="chest.png", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
@@ -74,9 +74,9 @@ A local folder holds `ensemble.json` and
 | Output | File | Content |
 | --- | --- | --- |
 | `mask` | `source_image_label.png` | uint8 0/1 mask of the selected structure on the source pixel grid |
-| `display_source` | `source_image.png` | 8-bit grayscale source the mask overlays |
+| `preview` | `source_image.png` | 8-bit grayscale source the mask overlays |
 | `probabilities` | `probabilities.npy` | float32 61×256×256 sigmoid probabilities on the padded model grid |
-| `prediction` | `prediction.json` | Labels, selected channel, threshold, members and content box |
+| `metadata` | `prediction.json` | Labels, selected channel, threshold, members and content box |
 
 - **Source-grid PNGs:** FleXray thresholds on the model grid and exports no source-grid
   images; the PNGs are a MedMLX addition. The mask is thresholded first, then resized

@@ -108,16 +108,16 @@ class EnsembleManifest(TypedDict):
 
 
 class RunOutputs(TypedDict):
-    """POSIX paths of the files ``run`` writes to its output directory."""
+    """POSIX paths of the files ``segment`` writes to its output directory."""
 
     mask: str
-    display_source: str
+    preview: str
     probabilities: str
-    prediction: str
+    metadata: str
 
 
 class RunDetails(TypedDict):
-    """Settings and geometry of one ``run``.
+    """Settings and geometry of one ``segment`` call.
 
     ``source_size`` is ``[width, height]`` of the input; ``model_grid`` is
     ``[height, width]``. ``content_box_tlbr`` is ``[top, left, bottom, right]``
@@ -142,7 +142,7 @@ class RunDetails(TypedDict):
 
 
 class RunResult(TypedDict):
-    """Return value of ``run``: output file paths, their artifact metadata and run details."""
+    """Return value of ``segment``: output file paths, their artifact metadata and run details."""
 
     outputs: RunOutputs
     artifacts: dict[str, Artifact]
