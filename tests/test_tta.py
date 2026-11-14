@@ -135,7 +135,7 @@ def test_runner_tta_and_normalization_restore_the_source_grid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     recorded: dict[str, HostArray],
-    scheme: str,
+    scheme: medmlx.NormalizationScheme,
     override: bool,
 ) -> None:
     """Compare ensemble TTA and exported source-grid masks with recordings."""

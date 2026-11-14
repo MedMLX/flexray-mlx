@@ -20,7 +20,7 @@ from functools import partial
 from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
-from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cast
+from typing import TYPE_CHECKING, Literal, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import numpy as np
 from medmlx_core.errors import (
@@ -29,6 +29,7 @@ from medmlx_core.errors import (
     MissingDependencyError,
     ModelExecutionError,
 )
+from medmlx_core.outputs import artifact
 from medmlx_core.weights import weights_dir, weights_revision
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -76,6 +77,8 @@ DEFAULT_IMAGE_SIZE = (256, 256)
 DEFAULT_NORMALIZATION_EPS = 1.0e-8
 DEFAULT_NORMALIZATION_PERCENTILES = (0.5, 99.5)
 _NORMALIZATION_SCHEMES = frozenset({"none", "minmax", "percentile_minmax", "standardize"})
+type NormalizationScheme = Literal["none", "minmax", "percentile_minmax", "standardize"]
+type MemberResidency = Literal["all", "one"]
 DICOM_SUFFIXES = frozenset({".dcm", ".dicom"})
 _DICOM_PREAMBLE_LENGTH = 128
 _DICOM_MAGIC = b"DICM"
@@ -1100,9 +1103,9 @@ def run(
     threshold: float = 0.5,
     tta_samples: int = 1,
     tta_seed: int | None = None,
-    normalization_scheme: str | None = None,
+    normalization_scheme: NormalizationScheme | None = None,
     overwrite: bool = False,
-    member_residency: str = "all",
+    member_residency: MemberResidency = "all",
 ) -> RunResult:
     """Segment one conventional 2D radiograph with the released FleXray network.
 
@@ -1157,7 +1160,11 @@ def run(
         source pixel grid), ``display_source`` to ``source_image.png`` (the 8-bit
         grayscale source), ``probabilities`` to ``probabilities.npy`` (float32
         ``61x256x256`` on the model grid) and ``prediction`` to
-        ``prediction.json``. ``details`` holds the selected label and channel,
+        ``prediction.json``. ``artifacts`` describes them, all in ``pixel`` space
+        (none has an affine): ``mask`` is a ``binary_mask`` with one label (value 1,
+        named ``label_name``) and ``display_source`` is a ``preview``, both on the
+        grid of ``image_path``; ``probabilities`` is a ``scalar_field`` on the model
+        grid; ``prediction`` is a ``report``. ``details`` holds the selected label and channel,
         threshold, members, TTA settings, normalization scheme, source size as
         ``[width, height]``, the content box as ``[top, left, bottom, right]`` in
         model-grid pixels (exclusive bottom/right) and the mask pixel count.
@@ -1182,7 +1189,7 @@ def run(
     if not isinstance(cast(object, label_name), str):
         raise InvalidInputError(f"FleXray label_name must be a string, got {label_name!r}")
     ensemble = _require_bool("ensemble", ensemble)
-    if member_residency not in MEMBER_RESIDENCY:
+    if cast(object, member_residency) not in MEMBER_RESIDENCY:
         raise InvalidInputError(f"FleXray member_residency must be one of {MEMBER_RESIDENCY}")
     overwrite = _require_bool("overwrite", overwrite)
     if (
@@ -1336,6 +1343,19 @@ def run(
             "display_source": display_path.as_posix(),
             "probabilities": probabilities_path.as_posix(),
             "prediction": prediction_path.as_posix(),
+        },
+        "artifacts": {
+            "mask": artifact(
+                kind="binary_mask",
+                coordinate_space="pixel",
+                grid_of="image_path",
+                labels=[{"value": 1, "name": label_name}],
+            ),
+            "display_source": artifact(
+                kind="preview", coordinate_space="pixel", grid_of="image_path"
+            ),
+            "probabilities": artifact(kind="scalar_field", coordinate_space="pixel"),
+            "prediction": artifact(kind="report", coordinate_space="not_applicable"),
         },
         "details": {
             "weights_revision": weights_revision(weights_root),

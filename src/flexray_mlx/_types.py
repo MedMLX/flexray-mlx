@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
 
 import numpy as np
+from medmlx_core.outputs import Artifact
 from medmlx_core.typing import MlxRuntime
 from numpy.typing import NDArray
 
@@ -141,7 +142,8 @@ class RunDetails(TypedDict):
 
 
 class RunResult(TypedDict):
-    """Return value of ``run``: output file paths and run details."""
+    """Return value of ``run``: output file paths, their artifact metadata and run details."""
 
     outputs: RunOutputs
+    artifacts: dict[str, Artifact]
     details: RunDetails

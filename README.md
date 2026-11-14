@@ -82,7 +82,9 @@ A local folder holds `ensemble.json` and
   images; the PNGs are a MedMLX addition. The mask is thresholded first, then resized
   with nearest neighbor to the padded canvas and unpadded, which inverts the
   preprocessing geometry, so no new decisions come from interpolation.
-- **Return value:** `{"outputs": {...}, "details": {...}}`, with run metadata in `details`.
+- **Return value:** `{"outputs": {...}, "artifacts": {...}, "details": {...}}`. `artifacts` marks
+  the mask as a binary mask named for `label_name` on the input's pixel grid, and the probabilities
+  as a field on the model grid; run metadata is in `details`.
 
 | Error | Raised when |
 | :--- | :--- |

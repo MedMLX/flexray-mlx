@@ -31,6 +31,7 @@ from _runner_cases import (
     write_release_bundle,
 )
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
+from medmlx_core.outputs import validate_outputs
 from PIL import Image
 
 from flexray_mlx import medmlx
@@ -137,6 +138,14 @@ def test_run_matches_upstream_with_seeded_network(tmp_path: Path) -> None:
         threshold=threshold,
     )
     outputs = result["outputs"]
+    _, artifacts = validate_outputs(cast("dict[str, object]", result))
+    assert set(artifacts) == set(outputs)
+    assert artifacts["mask"]["kind"] == "binary_mask"
+    assert artifacts["mask"]["coordinate_space"] == "pixel"
+    assert artifacts["mask"].get("grid_of") == "image_path"
+    assert artifacts["mask"].get("labels") == [{"value": 1, "name": label}]
+    assert artifacts["probabilities"]["kind"] == "scalar_field"
+    assert artifacts["probabilities"].get("grid_of") is None
     probabilities = np.load(outputs["probabilities"], allow_pickle=False)
     assert probabilities.shape == (61, 256, 256) and probabilities.dtype == np.float32
     channel = cast(FloatArray, fixture["probabilities_channel"])
