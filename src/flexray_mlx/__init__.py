@@ -1,6 +1,6 @@
 """Radiograph anatomy segmentation with FleXray in native MLX.
 
-``segment`` runs one radiograph end to end. Names load on first access, so
+``run`` runs one radiograph end to end. Names load on first access, so
 importing the package (or the medmlx declaration) does not import MLX.
 """
 
@@ -10,14 +10,14 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from flexray_mlx.medmlx import segment as segment
+    from flexray_mlx.medmlx import run as run
     from flexray_mlx.mlx_model import FleXrayMlxModel as FleXrayMlxModel
 
-__all__ = ["FleXrayMlxModel", "segment"]
+__all__ = ["FleXrayMlxModel", "run"]
 
 __version__ = "0.2.7"
 
-_EXPORTS = {"FleXrayMlxModel": "flexray_mlx.mlx_model", "segment": "flexray_mlx.medmlx"}
+_EXPORTS = {"FleXrayMlxModel": "flexray_mlx.mlx_model", "run": "flexray_mlx.medmlx"}
 
 
 def __getattr__(name: str) -> object:

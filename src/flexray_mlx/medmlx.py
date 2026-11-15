@@ -41,7 +41,7 @@ MODEL = {
     "id": "flexray",
     "label": "FleXray",
     "task": "segmentation",
-    "run": "flexray_mlx.medmlx:segment",
+    "run": "flexray_mlx.medmlx:run",
     # Measured MLX peak for a 1929x2207 chest radiograph, single model; larger inputs need more.
     "peak_memory_gb": 1.2,
     "summary": (
@@ -1065,7 +1065,7 @@ def _require_bool(name: str, value: object) -> bool:
     return value
 
 
-def segment(
+def run(
     *,
     image_path: str | Path,
     weights_path: str | Path | None = None,

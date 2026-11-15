@@ -34,9 +34,9 @@ uv pip install "flexray-mlx>=0.2.7"
 ## Run
 
 ```python
-from flexray_mlx import segment
+from flexray_mlx import run
 
-result = segment(image_path="chest.png", output_dir="out")
+result = run(image_path="chest.png", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 

@@ -41,7 +41,7 @@ from flexray_mlx.tta import Forward, predict_with_tta
 
 PROBABILITY_BOUND = 9e-3
 # Untyped view of the runner for deserialized invalid argument values.
-run_untyped = cast(Callable[..., RunResult], medmlx.segment)
+run_untyped = cast(Callable[..., RunResult], medmlx.run)
 
 
 def _recording(name: str) -> dict[str, HostArray]:
@@ -97,7 +97,7 @@ def test_run_matches_upstream_with_seeded_network(tmp_path: Path) -> None:
     image = write_case(tmp_path / "inputs", case)
     weights = write_release_bundle(tmp_path / "flexray", weight_seed=int(fixture["weight_seed"]))
     output_dir = tmp_path / "out"
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=str(image),
         weights_path=str(weights),
         output_dir=str(output_dir),
@@ -152,7 +152,7 @@ def test_runner_exports_recorded_upstream_unet_prediction(
         return (forward,)
 
     monkeypatch.setattr(medmlx, "_load_models", load_models)
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=write_case(tmp_path, case),
         weights_path=bundle,
         output_dir=tmp_path / "out",
@@ -182,7 +182,7 @@ def test_run_postprocessing_matches_upstream_decisions(
 ) -> None:
     """Compare restored masks and output metadata with upstream cases."""
     output_dir = tmp_path / "out"
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=write_case(tmp_path / "inputs", case),
         weights_path=bundle,
         output_dir=output_dir,
@@ -315,6 +315,6 @@ def test_unusable_bundles_raise_asset_not_ready(tmp_path: Path, bundle: Path, da
         (bundle / "members/flux0375/model.safetensors").unlink()
     # "tensors": the real network runs on an admitted bundle that holds no tensors.
     with pytest.raises(AssetNotReadyError):
-        medmlx.segment(
+        medmlx.run(
             image_path=write_case(tmp_path, "l8"), weights_path=bundle, output_dir=tmp_path / "out"
         )

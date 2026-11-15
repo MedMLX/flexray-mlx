@@ -162,7 +162,7 @@ def test_runner_tta_and_normalization_restore_the_source_grid(
         percentiles=(0.5, 99.5) if scheme == "percentile_minmax" else None,
     )
     assert np.array_equal(preprocessing.prepare(image), recorded[f"runner/{scheme}/prepared"])
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=image,
         weights_path=root,
         output_dir=tmp_path / "out",
@@ -175,7 +175,7 @@ def test_runner_tta_and_normalization_restore_the_source_grid(
     actual = np.load(result["outputs"]["probabilities"], allow_pickle=False)
     # One resident member at a time must reduce the spooled terms in the same
     # pass-major float32 order, so the probabilities are bit-identical.
-    one = medmlx.segment(
+    one = medmlx.run(
         image_path=image,
         weights_path=root,
         output_dir=tmp_path / "one",
