@@ -66,7 +66,8 @@ A local folder holds `ensemble.json` and
 | `overwrite` | `False` by default; existing outputs are replaced only when `True` |
 | `member_residency` | `all` by default; `one` loads ensemble members one at a time, spooling per-view probabilities to a temporary folder, with identical results |
 
-- **DICOM:** files end in `.dcm` or `.dicom` (any case) or have `DICM` at byte 128.
+- **DICOM:** files end in `.dcm` or `.dicom` (any case), or have no suffix and `DICM`
+  at byte 128; other suffixes, such as `.ima`, are read as raster images.
   Accepting a file does not mean the model suits its modality.
 - **Output paths** must differ from each other, the input and the bundle files,
   including links, even with `overwrite`.
