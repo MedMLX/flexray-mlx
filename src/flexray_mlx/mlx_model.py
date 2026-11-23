@@ -20,12 +20,13 @@ from flexray_mlx._kernels import upsample_concat
 from flexray_mlx._types import FloatArray
 
 if TYPE_CHECKING:
+    from medmlx_core.typing import MlxRuntime
     from mlx.core import array
 
-    from flexray_mlx._types import NativeRuntime, NeuralRuntime, SafetensorsRuntime
+    from flexray_mlx._types import NeuralRuntime, SafetensorsRuntime
 
 # Namespaces stay lazy until this native implementation is admitted.
-mx = cast("NativeRuntime", import_mlx())
+mx = cast("MlxRuntime", import_mlx())
 nn = cast("NeuralRuntime", import_module("mlx.nn"))
 safetensors = cast("SafetensorsRuntime", import_module("safetensors"))
 

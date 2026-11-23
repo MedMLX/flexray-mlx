@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict
+from typing import Literal, NotRequired, Protocol, TypedDict
 
 import numpy as np
 from medmlx_core.outputs import RunResult as _RunResult
-from medmlx_core.typing import MlxRuntime
+from medmlx_core.typing import ArrayLayer
 from numpy.typing import NDArray
-
-if TYPE_CHECKING:
-    from mlx.core import StreamOrDevice, array
 
 type HostArray = NDArray[np.generic]
 type RealArray = NDArray[np.bool_ | np.integer | np.floating]
@@ -24,27 +20,11 @@ type UIntArray = NDArray[np.uint32]
 type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
 
 
-class NativeRuntime(MlxRuntime, Protocol):
-    def square(self, x: array, /, *, stream: StreamOrDevice = None) -> array:
-        """Square an MLX array elementwise."""
-        ...
-
-    def compile(self, fun: Callable[[array], array]) -> Callable[[array], array]:
-        """Compile a pure one-array MLX function."""
-        ...
-
-
-class NativeOperation(Protocol):
-    def __call__(self, x: array) -> array:
-        """Apply a native operation to an MLX array."""
-        ...
-
-
 class NeuralRuntime(Protocol):
     def MaxPool2d(
         self, kernel_size: int | tuple[int, int], stride: int | tuple[int, int] | None = None,
         padding: int | tuple[int, int] | None = 0,
-    ) -> NativeOperation:
+    ) -> ArrayLayer:
         """Construct a two-dimensional MLX max-pooling layer."""
         ...
 

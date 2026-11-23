@@ -21,9 +21,8 @@ from flexray_mlx._random import TorchRandom
 from flexray_mlx._types import BoolArray, FloatArray, IntArray
 
 if TYPE_CHECKING:
+    from medmlx_core.typing import MlxRuntime
     from mlx.core import array
-
-    from flexray_mlx._types import NativeRuntime
 
 Forward = Callable[[FloatArray], FloatArray]
 
@@ -188,7 +187,7 @@ def view_probabilities(forward: Forward, view: FloatArray, flipped: BoolArray | 
 
         from flexray_mlx._kernels import torch_cpu_sigmoid
 
-        mx = cast("NativeRuntime", import_mlx())
+        mx = cast("MlxRuntime", import_mlx())
         native = cast(NativeForward, forward)
         flags = np.zeros(len(view), np.int32) if flipped is None else flipped.astype(np.int32)
         logits = native.forward_native(mx.array(np.asarray(view, dtype=np.float32)))
