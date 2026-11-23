@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from medmlx_core.typing import MetalKernel
-
-from flexray_mlx._types import NativeRuntime
+from medmlx_core.typing import MetalKernel, MlxRuntime
 
 if TYPE_CHECKING:
     from mlx.core import array
@@ -47,21 +45,18 @@ out[i] = ((1.0f - fy) * (1.0f - fx)) * a
 
 
 @lru_cache(maxsize=1)
-def _resize_concat_kernel(mx: NativeRuntime) -> MetalKernel:
+def _resize_concat_kernel(mx: MlxRuntime) -> MetalKernel:
     """Compile and cache the Metal kernel for corner-aligned resize and concatenation."""
-    return cast(
-        MetalKernel,
-        mx.fast.metal_kernel(
-            name="flexray_bilinear_concat",
-            input_names=["inp", "skip"],
-            output_names=["out"],
-            source=_RESIZE_CONCAT,
-            compile_options={"math_mode": "safe"},
-        ),
+    return mx.fast.metal_kernel(
+        name="flexray_bilinear_concat",
+        input_names=["inp", "skip"],
+        output_names=["out"],
+        source=_RESIZE_CONCAT,
+        compile_options={"math_mode": "safe"},
     )
 
 
-def upsample_concat(x: array, skip: array, *, mx: NativeRuntime) -> array:
+def upsample_concat(x: array, skip: array, *, mx: MlxRuntime) -> array:
     """Join a 2x bilinear NHWC resize with ``skip``, keeping resized channels first.
 
     Inputs must be FP32, with the same positive batch size and a skip grid
@@ -152,21 +147,18 @@ if (bits >= 0x7E800000u && bits < 0x7F800000u) {
 
 
 @lru_cache(maxsize=1)
-def _sigmoid_kernel(mx: NativeRuntime) -> MetalKernel:
+def _sigmoid_kernel(mx: MlxRuntime) -> MetalKernel:
     """Compile and cache the Torch-CPU-exact sigmoid kernel."""
-    return cast(
-        MetalKernel,
-        mx.fast.metal_kernel(
-            name="flexray_torch_cpu_sigmoid",
-            input_names=["logits", "flipped"],
-            output_names=["out"],
-            source=_SLEEF_SIGMOID,
-            compile_options={"math_mode": "safe"},
-        ),
+    return mx.fast.metal_kernel(
+        name="flexray_torch_cpu_sigmoid",
+        input_names=["logits", "flipped"],
+        output_names=["out"],
+        source=_SLEEF_SIGMOID,
+        compile_options={"math_mode": "safe"},
     )
 
 
-def torch_cpu_sigmoid(logits: array, flipped: array, *, mx: NativeRuntime) -> array:
+def torch_cpu_sigmoid(logits: array, flipped: array, *, mx: MlxRuntime) -> array:
     """Unflip NHWC logits and return Torch-CPU-exact sigmoid probabilities in NCHW.
 
     Args:

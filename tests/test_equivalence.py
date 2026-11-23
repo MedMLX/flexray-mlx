@@ -60,12 +60,12 @@ def test_checkpoint_mismatch_is_rejected_at_load(tmp_path: Path, problem: str) -
 def test_metal_sigmoid_matches_torch_cpu_emulation() -> None:
     """Unflip and sigmoid on Metal give the strict CPU emulation's float32 bits."""
     from medmlx_core import import_mlx
+    from medmlx_core.typing import MlxRuntime
 
     from flexray_mlx._kernels import torch_cpu_sigmoid
-    from flexray_mlx._types import NativeRuntime
     from flexray_mlx.medmlx import multilabel_probabilities
 
-    mx = cast(NativeRuntime, import_mlx())
+    mx = cast(MlxRuntime, import_mlx())
     logits = np.concatenate(seeded_member_logits(2))
     # Quotients below the smallest normal float32, and the saturation branches.
     logits[1, 0, 0, :6] = np.array([-87.5, -88.7, -103.9, -104.5, 100.5, 1e-45], np.float32)
