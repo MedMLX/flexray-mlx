@@ -44,7 +44,7 @@ Use `label_name` to select a structure.
 
 | `ensemble` | Weights |
 | :--- | :--- |
-| `False` (default) | The flagship `flux0375`. Omitting `weights_path` downloads `MedMLX/flexray-mlx` into the shared MedMLX cache on first use; with MedMLX installed, `medmlx setup flexray` downloads it ahead of time |
+| `False` (default) | The flagship `flux0375`. It downloads from `MedMLX/flexray-mlx` on first use; `medmlx setup flexray` downloads it ahead of time |
 | `True` | All five members, in an explicit `weights_path` folder |
 
 A local folder holds `ensemble.json` and
@@ -119,14 +119,13 @@ logits = model(np.zeros((1, 1, 256, 256), dtype=np.float32))  # Bx1x256x256 -> B
   converts convolution weights to MLX layout and every tensor to float32, keeping the
   names, and rejects tensor names or shapes that differ from the released network.
 - Inputs are prepared images; preparation, sigmoid, ensembling, TTA and source-grid
-  restoration are the caller's.
+  restoration are up to you.
 - `flexray_mlx.tta.predict_with_tta(forward_fn, images, tta_samples=..., seed=..., normalizer=...)`
   takes one or more forward callables and already normalized float32 BxCxHxW images, and
   returns `(logits, probabilities)`. Pass the `normalize` method of
   `flexray_mlx.medmlx.ImagePreprocessing` as `normalizer` to follow the bundle.
   `flexray_mlx.tta.tta_probabilities` takes the same arguments and returns only the
   probabilities.
-- Inference requires Apple Silicon with Metal.
 
 ## Use with MedMLX
 
